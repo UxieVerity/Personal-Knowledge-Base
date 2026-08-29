@@ -1,0 +1,20 @@
+{
+	"nodes":[
+		{"id":"c49acd0331223d54","type":"text","text":"宏任务","x":-140,"y":-300,"width":250,"height":60},
+		{"id":"23274996d582d63f","type":"text","text":"微任务\n（clean up all the running script）","x":-177,"y":-200,"width":324,"height":85},
+		{"id":"651e2346829299aa","type":"text","text":"是否要更新渲染","x":-140,"y":-60,"width":250,"height":60},
+		{"id":"83fa3530e2d1e3df","type":"text","text":"update rendering","x":-140,"y":42,"width":250,"height":60},
+		{"id":"3b95c89535fe5ed7","type":"text","text":"（空闲执行）requestIdleCallback","x":-140,"y":140,"width":250,"height":60},
+		{"id":"884bb8b12614e91d","type":"text","text":"完成一轮循环，回到宏任务","x":-140,"y":240,"width":250,"height":60}
+	],
+	"edges":[
+		{"id":"da7dff4e613d5382","fromNode":"c49acd0331223d54","fromSide":"bottom","toNode":"23274996d582d63f","toSide":"top"},
+		{"id":"a261e18ce0203b4e","fromNode":"23274996d582d63f","fromSide":"bottom","toNode":"651e2346829299aa","toSide":"top"},
+		{"id":"9380721407a5a7c9","fromNode":"651e2346829299aa","fromSide":"bottom","toNode":"83fa3530e2d1e3df","toSide":"top","label":"Y"},
+		{"id":"9d5d917aa6bc7444","fromNode":"83fa3530e2d1e3df","fromSide":"bottom","toNode":"3b95c89535fe5ed7","toSide":"top"},
+		{"id":"30a0ad3223f70eb8","fromNode":"3b95c89535fe5ed7","fromSide":"bottom","toNode":"884bb8b12614e91d","toSide":"top"},
+		{"id":"7e055d4b2fe62d1a","fromNode":"651e2346829299aa","fromSide":"right","toNode":"c49acd0331223d54","toSide":"right","label":"N"},
+		{"id":"7e8ce2cbbcb73d11","fromNode":"884bb8b12614e91d","fromSide":"left","toNode":"c49acd0331223d54","toSide":"left"},
+		{"id":"21b2bcd4fa90cb4e","fromNode":"651e2346829299aa","fromSide":"right","toNode":"3b95c89535fe5ed7","toSide":"right","label":"主线程空闲"}
+	]
+}
