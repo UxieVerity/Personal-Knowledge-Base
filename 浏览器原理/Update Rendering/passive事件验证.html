@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Passive 事件验证</title>
+<style>
+  body{font:14px/1.6 system-ui,sans-serif;padding:20px;max-width:760px;margin:0 auto}
+  h1{font-size:19px}
+  table{border-collapse:collapse;width:100%;margin:10px 0}
+  th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:13px}
+  code{background:#f0f0f0;padding:1px 5px;border-radius:4px}
+  .box{width:260px;height:120px;overflow:auto;border:1px solid #999;margin-bottom:8px;padding:6px}
+  .box div{height:40px}
+  pre{background:#111;color:#7f9f7f;padding:12px;border-radius:8px;font-size:12.5px;min-height:200px;overflow:auto}
+  button{padding:6px 14px;margin:4px 6px 4px 0;cursor:pointer}
+</style>
+</head>
+<body>
+<h1>Passive 事件监听器：scroll 有没有优化效果？</h1>
+
+<h2>1. 各事件是否可取消（cancelable）——决定 passive 有没有意义</h2>
+<table>
+  <tr><th>事件</th><th>cancelable</th><th>能否被 preventDefault 拦截默认动作</th><th>加 passive 有效？</th></tr>
+  <tr><td>scroll</td><td id="c-scroll">…</td><td>—</td><td id="p-scroll">—</td></tr>
+  <tr><td>wheel</td><td id="c-wheel">…</td><td>—</td><td id="p-wheel">—</td></tr>
+  <tr><td>touchmove</td><td id="c-touchmove">…</td><td>—</td><td id="p-touchmove">—</td></tr>
+</table>
+
+<h2>2. 滚动容器（wheel 驱动）</h2>
+<div class="box" id="scroller">
+  <div>item 1</div><div>item 2</div><div>item 3</div><div>item 4</div>
+  <div>item 5</div><div>item 6</div><div>item 7</div><div>item 8</div>
+  <div>item 9</div><div>item 10</div>
+</div>
+
+<div>
+  <button id="btnScrollPassive">给 scroll 加 passive:true</button>
+  <button id="btnScrollNonpassive">给 scroll 加 passive:false</button>
+  <button id="btnWheelPassive">给 wheel 加 passive:true</button>
+  <button id="btnWheelNonpassive">给 wheel 加 passive:false</button>
+  <button id="btnTestPrevent">在回调里 preventDefault()</button>
+</div>
+
+<h2>3. 日志</h2>
+<pre id="log">（滚动容器或点按钮，观察事件与 cancelable）</pre>
+
+<script>
+const logEl = document.getElementById('log');
+const scroller = document.getElementById('scroller');
+const listeners = new Map(); // 保存注册的监听器，方便移除
+
+function log(msg){ logEl.textContent = msg + '\n' + logEl.textContent; }
+
+// 记录各事件真实的 cancelable
+const info = {};
+function probe(type, ev){
+  info[type] = { cancelable: ev.cancelable, defaultPrevented: ev.defaultPrevented };
+  updateTable();
+}
+function updateTable(){
+  if (info.scroll) document.getElementById('c-scroll').textContent = info.scroll.cancelable;
+  if (info.wheel) document.getElementById('c-wheel').textContent = info.wheel.cancelable;
+  if (info.touchmove) document.getElementById('c-touchmove').textContent = info.touchmove.cancelable;
+}
+// 注册探测（不 passive，事件发生就记录）
+scroller.addEventListener('scroll', e => probe('scroll', e));
+scroller.addEventListener('wheel', e => probe('wheel', e));
+scroller.addEventListener('touchmove', e => probe('touchmove', e));
+
+let preventFlag = false;
+
+function bindScroller(type, passive){
+  // 先移除旧的同类型监听
+  if (listeners.has(type)) { scroller.removeEventListener(type, listeners.get(type)); listeners.delete(type); }
+  const fn = (e) => {
+    if (preventFlag){
+      try { e.preventDefault(); log(`[${type}] passive=${passive} 调用 preventDefault → defaultPrevented=${e.defaultPrevented}`); }
+      catch(err){ log(`[${type}] passive=${passive} preventDefault 出错: ${err.message}`); }
+    } else {
+      log(`[${type}] passive=${passive} 触发 (cancelable=${e.cancelable})`);
+    }
+  };
+  scroller.addEventListener(type, fn, {passive});
+  listeners.set(type, fn);
+  log(`已绑定 ${type}，passive=${passive}`);
+}
+
+document.getElementById('btnScrollPassive').onclick = () => bindScroller('scroll', true);
+document.getElementById('btnScrollNonpassive').onclick = () => bindScroller('scroll', false);
+document.getElementById('btnWheelPassive').onclick = () => bindScroller('wheel', true);
+document.getElementById('btnWheelNonpassive').onclick = () => bindScroller('wheel', false);
+document.getElementById('btnTestPrevent').onclick = () => {
+  preventFlag = !preventFlag;
+  log('preventDefault 开关: ' + (preventFlag ? 'ON' : 'OFF'));
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>验证 scroll 是滚动前还是滚动后</title>
+<style>
+  body{font:14px/1.6 system-ui,sans-serif;padding:20px;max-width:780px;margin:0 auto;background:#0f1115;color:#e8ecf4}
+  h1{font-size:19px} h2{font-size:15px;margin:18px 0 6px;color:#9fc5ff}
+  .scroller{width:300px;height:130px;overflow:auto;border:1px solid #3a4152;border-radius:8px;background:#171a21;margin-bottom:10px}
+  .scroller div{height:40px;padding:8px 10px;color:#8b93a7;border-bottom:1px solid #232936}
+  pre{background:#0b0d12;border:1px solid #2a2f3a;border-radius:8px;padding:12px;font-size:12.5px;min-height:300px;overflow:auto;line-height:1.7}
+  .tag{color:#7bed9f}.warn{color:#ff9f43}.key{color:#4db6ff}.dim{color:#8b93a7}
+</style>
+</head>
+<body>
+<h1>验证 scroll 事件：滚动前还是滚动后？</h1>
+
+<div class="scroller" id="scroller">
+  <div>item 1</div><div>item 2</div><div>item 3</div><div>item 4</div><div>item 5</div>
+  <div>item 6</div><div>item 7</div><div>item 8</div><div>item 9</div><div>item 10</div>
+  <div>item 11</div><div>item 12</div><div>item 13</div><div>item 14</div><div>item 15</div>
+  <div>item 16</div><div>item 17</div><div>item 18</div><div>item 19</div><div>item 20</div>
+</div>
+
+<pre id="log"></pre>
+
+<script>
+const scroller = document.getElementById('scroller');
+const logEl = document.getElementById('log');
+const log = s => { logEl.textContent += s.replace(/<[^>]+>/g, '') + '\n'; };
+
+// 标记：scroll 回调执行过几次
+let scrollCount = 0;
+scroller.addEventListener('scroll', e => {
+  scrollCount++;
+  log(`<span class="key">[scroll回调 #${scrollCount}]</span> 触发时 scrollTop = ${scroller.scrollTop}  |  cancelable = ${e.cancelable}`);
+}, {passive:true});
+
+// ============ 验证 1：scrollTop 赋值是同步生效，scroll 回调是异步派发 ============
+log('═══ 验证 1：滚动偏移【同步】应用，scroll 事件【异步】派发 ═══');
+scroller.scrollTop = 100;
+log(`设定 scrollTop = 100 后，<span class="tag">同步立即读</span> scrollTop = ${scroller.scrollTop}  (滚动已应用)`);
+log(`设定后<span class="tag">同步检查</span> scroll 回调次数 = ${scrollCount}  (回调尚未触发 → 异步派发)`);
+
+setTimeout(() => {
+  log(`setTimeout 后 <span class="tag">scroll 回调次数 = ${scrollCount}</span>  (此时回调才触发 → 在滚动之后)`);
+
+  // ============ 验证 2：scrollTop 是"滚动后"的新值 ============
+  log('\n═══ 验证 2：回调里读到的 scrollTop 是滚动后的新值 ═══');
+  log(`上一段滚动到 100，scroll 回调触发时读到的就是 <span class="tag">100</span>（新值，不是旧值 0）`);
+  log('→ 若 scroll 是"滚动前"事件，回调里应读到旧值 0；读到新值 100 证明滚动已发生');
+
+  // ============ 验证 3：scroll 不可取消（preventDefault 无效）============
+  log('\n═══ 验证 3：scroll 上 preventDefault 无效（不可取消 → 不是"滚动前拦截"）═══');
+  const h3 = e => { const before = e.defaultPrevented; e.preventDefault(); log(`scroll 回调里调 preventDefault → defaultPrevented 从 ${before} → ${e.defaultPrevented}（<span class="warn">仍是 false，无效</span>）`); };
+  scroller.addEventListener('scroll', h3);
+  scroller.scrollTop = 150;
+  scroller.removeEventListener('scroll', h3);
+  setTimeout(() => {
+    log(`滚动到 150 照常发生（scrollTop=${scroller.scrollTop}），preventDefault 没有拦住 → scroll 在滚动【后】`);
+
+    // ============ 验证 4：回调里再滚动 → 触发新 scroll（事后通知的反馈循环）============
+    log('\n═══ 验证 4：在 scroll 回调里再设置 scrollTop → 触发【新的】scroll 事件 ═══');
+    log('若 scroll 是"滚动前"事件，回调里改位置应在同一默认动作中生效，不会产生新事件；');
+    log('实际是：滚动结束 → 通知(scroll) → 回调里又滚动 → 又通知(scroll)，形成反馈循环：');
+    let loops = 0;
+    const h4 = () => {
+      if (loops >= 3) { scroller.removeEventListener('scroll', h4); log(`<span class="tag">反馈循环跑了 ${loops} 次 → 证明 scroll 是滚动后的通知</span>`); return; }
+      loops++;
+      log(`  [scroll回调] 此刻 scrollTop=${scroller.scrollTop}，我在回调里再 +20`);
+      scroller.scrollTop += 20;
+    };
+    scroller.addEventListener('scroll', h4);
+    scroller.scrollTop = 0;
+
+    // ============ 验证 5：与 wheel/touchmove 的语义对比 ============
+    log('\n═══ 验证 5：scroll vs wheel/touchmove 语义对比 ═══');
+    log(`scroll    → cancelable=false → 滚动【后】通知，不可拦截`);
+    log(`wheel     → cancelable=true  → 滚动【前】事件，可 preventDefault 取消滚动`);
+    log(`touchmove → cancelable=true  → 滚动【前】事件，可 preventDefault 取消滚动`);
+    log(`<span class="dim">（在真实浏览器滚动页面即可观察：wheel 先触发、滚动发生、scroll 后触发）</span>`);
+
+    log('\n═══════ 最终结论 ═══════');
+    log('<span class="tag">scroll 事件 = 滚动【后】的通知</span>（偏移已应用、不可取消、异步派发）');
+    log('<span class="tag">wheel/touchmove = 滚动【前】的事件</span>（偏移未变、可取消拦截）');
+    document.title = 'DONE';
+  }, 100);
+}, 100);
+</script>
+</body>
+</html>

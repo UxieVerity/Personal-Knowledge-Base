@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>验证 passive:false 时 preventDefault 能否阻止滚动</title>
+<style>
+  body{font:14px/1.6 system-ui,sans-serif;padding:20px;max-width:820px;margin:0 auto;background:#0f1115;color:#e8ecf4}
+  h1{font-size:19px} h2{font-size:15px;margin:18px 0 6px;color:#9fc5ff}
+  .scroller{width:300px;height:130px;overflow:auto;border:1px solid #3a4152;border-radius:8px;background:#171a21;margin-bottom:6px}
+  .scroller div{height:40px;padding:8px 10px;color:#8b93a7;border-bottom:1px solid #232936}
+  pre{background:#0b0d12;border:1px solid #2a2f3a;border-radius:8px;padding:12px;font-size:12.5px;min-height:380px;overflow:auto;line-height:1.7}
+  button{padding:7px 14px;margin:6px 6px 6px 0;cursor:pointer;background:#232936;border:1px solid #3a4152;color:#e8ecf4;border-radius:6px}
+  button:hover{background:#2c3342}
+  .green{color:#7bed9f}.yellow{color:#ff9f43}.blue{color:#4db6ff}.dim{color:#8b93a7}
+</style>
+</head>
+<body>
+<h1>passive:false 时 preventDefault 能不能阻止滚动？</h1>
+
+<h2>滚动容器</h2>
+<div class="scroller" id="scroller">
+  <div>item 1</div><div>item 2</div><div>item 3</div><div>item 4</div><div>item 5</div>
+  <div>item 6</div><div>item 7</div><div>item 8</div><div>item 9</div><div>item 10</div>
+  <div>item 11</div><div>item 12</div><div>item 13</div><div>item 14</div><div>item 15</div>
+</div>
+
+<h2>控制（说明见日志）</h2>
+<button id="btnScrollTop">① 直接设 scrollTop=100（走 scroll，无默认动作）</button>
+<button id="btnWheelNoCancel">② 派发 wheel（passive:false + 不 preventDefault）</button>
+<button id="btnWheelCancel">③ 派发 wheel（passive:false + preventDefault）</button>
+<button id="btnWheelPassiveCancel">④ 派发 wheel（passive:true + preventDefault，应无效）</button>
+<button id="btnReset">↺ 重置 scrollTop=0</button>
+
+<pre id="log"></pre>
+
+<script>
+const scroller = document.getElementById('scroller');
+const logEl = document.getElementById('log');
+const log = s => { logEl.textContent += s.replace(/<[^>]+>/g,'') + '\n'; };
+const SCROLL_MAX = scroller.scrollHeight - scroller.clientHeight;
+
+// 监控 scroll 事件（看派发的 wheel 有没有引发真实滚动）
+let scrollSeen = 0;
+scroller.addEventListener('scroll', () => {
+  scrollSeen++;
+  log(`   [scroll 事件触发 #${scrollSeen}] scrollTop=${scroller.scrollTop.toFixed(1)}`);
+}, {passive:true});
+
+// 派发一个真实可取消的 wheel 事件（模拟一次滚轮滚动的"默认滚动动作"）
+function fireWheel(cancel, passive){
+  const before = scroller.scrollTop;
+  const ev = new WheelEvent('wheel', {
+    deltaY: 120,          // 向下滚 120
+    cancelable: true,     // wheel 真实场景可取消
+    bubbles: true
+  });
+  let defaultPreventedAfter = false;
+  const h = (e) => {
+    if (cancel) { e.preventDefault(); }
+    defaultPreventedAfter = e.defaultPrevented;
+  };
+  // 关键：wheel 用 passive:false 注册，preventDefault 才能生效
+  scroller.addEventListener('wheel', h, {passive: passive === false ? false : true});
+  const dispatched = scroller.dispatchEvent(ev);  // 返回 false 表示默认动作被取消
+  scroller.removeEventListener('wheel', h);
+  // 同步检查滚动是否被"默认动作"应用（真实滚动由浏览器默认动作驱动，headless 下我们观察 defaultPrevented + dispatched）
+  const after = scroller.scrollTop;
+  log(`   派发后: defaultPrevented=${defaultPreventedAfter}  dispatchEvent返回=${dispatched}  scrollTop ${before.toFixed(1)} → ${after.toFixed(1)}`);
+  return { defaultPreventedAfter, dispatched };
+}
+
+document.getElementById('btnScrollTop').onclick = () => {
+  log('\n══ ① 设 scrollTop=100：scroll 事件在后，无默认动作可阻止 ══');
+  scroller.scrollTop = 100;
+  log(`   scrollTop=${scroller.scrollTop}（滚动已应用）`);
+  log(`   <span class="green">结论：scroll 没有"默认动作"可取消，passive 无关</span>`);
+};
+
+document.getElementById('btnWheelNoCancel').onclick = () => {
+  log('\n══ ② wheel passive:false 但不 preventDefault：默认滚动应发生 ══');
+  const r = fireWheel(false, false);
+  log(`   defaultPrevented=${r.defaultPreventedAfter} → <span class="green">未取消，浏览器可执行滚动默认动作</span>`);
+};
+
+document.getElementById('btnWheelCancel').onclick = () => {
+  log('\n══ ③ wheel passive:false + preventDefault：应能取消滚动 ══');
+  const r = fireWheel(true, false);
+  log(`   defaultPrevented=${r.defaultPreventedAfter} → <span class="green">已取消 → dispatchEvent 返回 ${r.dispatched}，默认滚动被阻止</span>`);
+};
+
+document.getElementById('btnWheelPassiveCancel').onclick = () => {
+  log('\n══ ④ wheel passive:true + preventDefault：preventDefault 应被忽略 ══');
+  const r = fireWheel(true, true);
+  log(`   defaultPrevented=${r.defaultPreventedAfter} → <span class="yellow">passive 下 preventDefault 被忽略（true 应为 false）</span>`);
+};
+
+document.getElementById('btnReset').onclick = () => { scroller.scrollTop = 0; log('\n↺ 已重置 scrollTop=0'); };
+
+log('说明：wheel 事件有"默认滚动动作"（可被 preventDefault 取消）；scroll 事件是滚动后的通知（无默认动作可取消）。');
+log('passive 决定的是：preventDefault 是否被允许生效（true=忽略，false=允许）。');
+</script>
+</body>
+</html>

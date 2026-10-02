@@ -1,0 +1,17 @@
+{
+  "name": "_build-tools-lab",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "dependencies": {
+    "gulp": "^5.0.1",
+    "rollup": "^4.63.2",
+    "webpack": "^5.110.3",
+    "webpack-cli": "^7.2.3"
+  }
+}

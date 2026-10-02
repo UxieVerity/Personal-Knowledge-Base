@@ -1,1 +1,8 @@
-{}
+{
+  "showUnsupportedFiles": false,
+  "alwaysUpdateLinks": true,
+  "userIgnoreFilters": [
+    "前端工程化/_build-tools-lab/",
+    "node_modules/"
+  ]
+}

@@ -1,0 +1,5 @@
+/* slow.css —— 渲染阻塞实验素材。
+   <head> 里引用的外部样式表是 render-blocking：
+   浏览器必须下载并解析完它才进行首次渲染（否则 FCP 被推迟）。
+   headless 实测时由本地 HTTP 服务器注入 ~350ms 延迟。 */
+body{ --slow-css-loaded:1; }

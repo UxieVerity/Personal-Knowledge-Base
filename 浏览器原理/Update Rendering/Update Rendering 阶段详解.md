@@ -16,16 +16,14 @@
 │                                                          │
 │  Step 1: 获取待渲染文档列表                                 │
 │    ↓                                                     │
-│  Step 2: 对每个文档，按以下顺序执行：                         │
-│    ├─ 2.1  (resize/scroll)滚动事件                        │
-│    ├─ 2.2  ResizeObserver 回调                            │
-│    ├─ 2.3  rAF 回调 (Animation Frame Callbacks)           │
-│    ├─ 2.4  CSS 动画/过渡 状态更新                           │
-│    ├─ 2.5  Style Recalculation (样式计算)                  │
-│    ├─ 2.6  Layout (布局/重排)                              │
-│    ├─ 2.7  Paint (绘制)                                   │
-│    ├─ 2.8  IntersectionObserver 交叉状态计算*              │
-│    └─ 2.9  Compositing (合成)                             │
+│  对每个文档，按以下【规范步骤号】顺序执行：                    │
+│    ├─ Step 8   resize 事件（视口变化）                     │
+│    ├─ Step 9   scroll 事件（scrollend 也在附近）           │
+│    ├─ Step 11  CSS 动画 / 过渡 状态更新                    │
+│    ├─ Step 14  rAF 回调 (Animation Frame Callbacks)       │
+│    ├─ Step 16  强制样式 + 布局 → ResizeObserver 递送循环     │
+│    ├─ Step 19  IntersectionObserver 交叉状态计算*          │
+│    └─ Step 22  Paint / 呈现                                │
 │    ↓                                                     │
 │  Step 3: 通知各文档渲染已完成                               │
 └──────────────────────────────────────────────────────────┘
@@ -34,9 +32,39 @@
    不在本阶段内执行。
 ```
 
+> ✅ **顺序速记（已实测验证）**：`resize / scroll 事件 → rAF → 样式/布局 → RO → IO 计算 → Paint`
+> scroll、resize 事件在 **rAF 之前**派发（规范 Step 8/9 < 14）；RO 在 **rAF 之后**（Step 16 > 14）。
+> 规范原文见 [[HTML规范-update-the-rendering-原文]]；实测见 [[Update Rendering.html]] 和 [[ResizeObserver-vs-rAF-执行顺序]]
+
+[[Update Rendering.html]]
 ### 各子步骤详解
 
-#### Step 2.1 — rAF 回调
+#### Step 8 — resize 事件
+
+- 视口（window / iframe 子视口）尺寸变化时派发 `resize` 事件
+- ⚠️ 只能通过**真实改变视口**触发（拖动窗口/面板宽度），程序无法伪造 window resize
+- 位于渲染阶段最开头，**先于 scroll 和 rAF**
+- 实测：iframe 子视口变化时 `[resize-iframe]` 日志出现在 rAF 之前
+
+#### Step 9 — scroll 事件
+
+- 派发 `scroll` / `scrollend` 事件
+- 现代浏览器默认将 scroll 事件标记为 **passive**
+- ⚠️ 位于 **rAF 之前**（Step 9 < Step 14），是渲染阶段最早的步骤之一
+- 可能在 compositing 线程处理（同步 scroll 事件仍走主线程）
+- 实测日志（headless 逐帧时间戳）：
+  ```
+  scroll(34.9) = rAF-start#2(34.9)   ← scroll 恰在下一帧 rAF 之前派发
+  ```
+
+#### Step 11 — CSS 动画 / 过渡状态更新
+
+- 推进所有 active 的 CSS Animation / Transition 的时间线
+- 计算当前帧对应的插值
+- 触发 `animationstart` / `animationiteration` / `transitionend` 等事件
+- Web Animations API (`element.animate()`) 也在此步更新
+
+#### Step 14 — rAF 回调
 
 - 执行所有通过 `requestAnimationFrame(cb)` 注册的回调
 - 传入参数为当前帧的 **DOMHighResTimeStamp**
@@ -58,57 +86,28 @@ requestAnimationFrame(() => {
 });
 ```
 
-#### Step 2.2 — ResizeObserver 回调
+#### Step 16 — 样式/布局 + ResizeObserver 递送循环
 
-- 检查所有被观察元素的内容框尺寸是否与上次记录不同
-- 若有变化，执行回调，传入 `ResizeObserverEntry[]`
-- 🔑 回调执行后如果导致尺寸再次变化，浏览器会在**同一帧内重新运行 Layout + ResizeObserver**
+- 重新计算样式（Style Recalculation）→ 更新布局（Layout / Reflow）
+- 布局完成后，检查所有被观察元素的内容框尺寸是否与上次记录不同
+- 若有变化，执行 ResizeObserver 回调，传入 `ResizeObserverEntry[]`
+- 🔑 回调执行后如果导致尺寸再次变化，浏览器会在**同一帧内重新运行 Layout + ResizeObserver**（`while` 循环）
 - Chrome 限制最大循环次数为 **10 次**
 
-#### Step 2.3 — 滚动事件
+> ⚠️ **执行顺序提醒**：ResizeObserver 回调在 **rAF 回调之后**递送（Step 16 > Step 14），rAF 改的尺寸本帧 RO 收不到，要到下一帧。详见 [[ResizeObserver-vs-rAF-执行顺序]]
 
-- 派发 `scroll` / `scrollend` 事件
-- 现代浏览器默认将 scroll 事件标记为 **passive**
-- 可能在 compositing 线程处理
-
-#### Step 2.4 — CSS 动画/过渡状态更新
-
-- 推进所有 active 的 CSS Animation / Transition 的时间线
-- 计算当前帧对应的插值
-- 触发 `animationstart` / `animationiteration` / `transitionend` 等事件
-- Web Animations API (`element.animate()`) 也在此步更新
-
-#### Step 2.5 — Style Recalculation（样式计算）
-
-- 遍历脏节点，重新匹配 CSS 选择器
-- 计算 computed style
-- 构建/更新 Style Tree
-- 优化：Bloom Filter、Rule Map 加速选择器匹配；未变更子树被跳过
-
-#### Step 2.6 — Layout（布局 / Reflow）
-
-- 根据 Style Tree 计算每个盒子的几何信息（位置、大小）
-- 构建 Layout Tree
-- 增量布局：仅重新计算脏节点及其受影响祖先
-- 🔴 **性能瓶颈高发区**
-
-#### Step 2.7 — IntersectionObserver 交叉状态计算
+#### Step 19 — IntersectionObserver 交叉状态计算
 
 - 基于刚完成的 Layout 结果，计算所有被观察元素与 root 的交叉比例
 - 将状态变更记录到内部队列
 - ⚠️ **仅计算，不执行回调**
 - 回调通过 `queue a task` 派发到宏任务队列
 
-#### Step 2.8 — Paint（绘制）
+#### Step 22 — Paint（绘制 / 呈现）
 
 - 将 Layout Tree 转换为 Paint Instructions（绘制指令列表）
 - 生成 Layer Tree（分层）
 - 栅格化（Rasterization）：将矢量绘制指令转为位图纹理
 - 通常在 GPU 进程/Compositor Thread 上异步栅格化
-
-#### Step 2.9 — Compositing（合成）
-
-- 将所有图层合成为最终的屏幕帧
-- 应用 transform / opacity 等 GPU 加速属性
-- 提交给显示系统（VSync 信号对齐）
+- 合成（Compositing）：应用 transform / opacity 等 GPU 加速属性，提交给显示系统
 - ✅ 这一步完成后，用户才能看到视觉更新

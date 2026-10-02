@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>从输入网址到页面展示 —— 各阶段耗时逐段拆解</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%234db6ff'/><text x='8' y='12' font-size='11' text-anchor='middle' fill='%230f1115' font-family='monospace' font-weight='bold'>网</text></svg>">
+<!--
+  实验素材：
+  - slow.css  放在 <head> 里的外部样式表 → 渲染阻塞（render-blocking）
+  - slow.png  <body> 里的大图 → 不阻塞 DOM 解析，但可能成为 LCP
+  测量脚本（headless）会用本地 HTTP 服务器给这两个资源注入人为延迟，
+  对比「慢 CSS / 慢图片」对 FCP / LCP 的影响；直接双击打开则即时加载。
+-->
+<link rel="stylesheet" href="slow.css">
+<link rel="stylesheet" href="fast.css">
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --muted:#8b93a7; --text:#e8ecf4;
+    --ok:#2ecc71; --warn:#ffb74d; --bad:#ff6b6b; --acc:#4db6ff;
+    --dns:#6c5ce7; --tcp:#00b894; --tls:#fdcb6e; --ttfb:#e17055; --dl:#00cec9;
+    --parse:#a29bfe; --paint:#fd79a8;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:var(--bg); color:var(--text); font:14px/1.6 system-ui,"Segoe UI",sans-serif; padding:24px; max-width:920px; margin:0 auto; }
+  h1{ font-size:20px; margin-bottom:4px; }
+  .sub{ color:var(--muted); margin-bottom:16px; font-size:13px; }
+  .controls{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; align-items:center; }
+  button{ background:#232936; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 14px; font-size:13px; cursor:pointer; }
+  button:hover{ background:#2c3342; }
+  .stats{ font-size:13px; color:var(--muted); margin-left:auto; white-space:nowrap; }
+  .stage{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:14px; }
+  .stage h2{ font-size:15px; margin-bottom:12px; color:var(--acc); }
+  .stage h2 .subtag{ color:var(--muted); font-weight:400; font-size:12px; }
+  .slowimg-wrap{ margin-bottom:12px; }
+  .slowimg-wrap img{ max-width:100%; border-radius:8px; border:1px solid var(--line); display:block; }
+  .slowimg-lbl{ color:var(--muted); font-size:12px; margin-top:6px; }
+  /* 瀑布图 */
+  .wf-axis{ position:relative; height:200px; background:#0b0d12; border:1px solid var(--line); border-radius:10px; padding:6px 0; margin-bottom:8px; }
+  .wf-seg{ position:absolute; top:6px; height:26px; border-radius:5px; display:flex; align-items:center; justify-content:center;
+           color:#0b0d12; font:600 11px ui-monospace,Consolas,monospace; overflow:hidden; white-space:nowrap; }
+  .wf-seg span{ padding:0 4px; }
+  .wf-axis .lbl{ position:absolute; left:0; right:0; font:11px ui-monospace,Consolas,monospace; color:var(--muted); text-align:center; }
+  .wf-tick{ position:absolute; bottom:0; top:0; border-left:1px dashed rgba(139,147,167,.25); color:var(--muted);
+            font:10px ui-monospace,Consolas,monospace; padding-left:3px; }
+  .legend{ display:flex; flex-wrap:wrap; gap:14px; font-size:12px; color:var(--muted); margin-bottom:12px; }
+  .dot{ display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:6px; }
+  th,td{ text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th{ color:var(--muted); font-weight:600; font-size:12px; }
+  td.num{ font-family:ui-monospace,Consolas,monospace; text-align:right; }
+  td.hot{ color:var(--warn); font-weight:600; }
+  #log{ background:#0b0d12; border:1px solid var(--line); border-radius:10px; padding:12px;
+        height:260px; overflow-y:auto; font:12px/1.7 ui-monospace,Consolas,monospace; }
+  .logline{ white-space:pre; }
+  .paint{ color:var(--paint); } .res{ color:var(--acc); } .sys{ color:var(--muted); font-style:italic; }
+  .badge{ display:inline-block; background:#232936; border:1px solid var(--line); border-radius:6px; padding:1px 7px; font-size:11px; color:var(--muted); margin-left:6px; }
+</style>
+</head>
+<body>
+  <h1>输入 URL → 页面展示：各阶段耗时逐段拆解</h1>
+  <div class="sub">PerformanceNavigationTiming + Paint Timing 实测。TTFB 是「网络请求阶段」与「浏览器渲染阶段」的分界线：
+      网络延迟决定 TTFB，渲染链路决定 FCP / LCP。本页的 <span class="badge">slow.css</span> 故意放 <code>&lt;head&gt;</code> 渲染阻塞，<span class="badge">slow.png</span> 是 body 里的大图——headless 实测二者对 FCP/LCP 的不同影响。</div>
+
+  <div class="controls">
+    <button id="btnReload">🔄 重新加载测量</button>
+    <button id="btnClear">🗑 清空日志</button>
+    <span class="stats" id="stats">测量中…</span>
+  </div>
+
+  <div class="stage">
+    <h2>① 阶段瀑布图 <span class="subtag">相对 navigationStart 的时间轴（0 = 输入完成 / 开始导航）</span></h2>
+    <div class="slowimg-wrap">
+      <img id="slowImg" src="slow.png" alt="LCP 候选图（600ms 延迟加载）" width="600" height="300">
+      <div class="slowimg-lbl">LCP 候选图 slow.png —— body 里的大图，不阻塞 DOM 解析（DOMContentLoaded 不等它），但会成为 LCP</div>
+    </div>
+    <div class="wf-axis" id="wfAxis"></div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--dns)"></span>DNS</span>
+      <span><span class="dot" style="background:var(--tcp)"></span>TCP</span>
+      <span><span class="dot" style="background:var(--tls)"></span>TLS</span>
+      <span><span class="dot" style="background:var(--ttfb)"></span>TTFB</span>
+      <span><span class="dot" style="background:var(--dl)"></span>下载HTML</span>
+      <span><span class="dot" style="background:var(--parse)"></span>DOM解析</span>
+      <span><span class="dot" style="background:var(--paint)"></span>FP/FCP/LCP</span>
+    </div>
+    <h2 style="margin-top:8px">② 逐阶段实测数据</h2>
+    <table>
+      <thead><tr><th>阶段</th><th>含义</th><th>起止 (ms)</th><th>耗时</th></tr></thead>
+      <tbody id="phaseBody"></tbody>
+    </table>
+  </div>
+
+  <div class="stage">
+    <h2>③ 渲染关键点（Paint Timing / 事件）</h2>
+    <table>
+      <thead><tr><th>指标</th><th>时间 (ms)</th><th>说明</th></tr></thead>
+      <tbody id="paintBody"></tbody>
+    </table>
+  </div>
+
+  <div class="legend" style="margin:12px 0 8px">
+    <span><span class="dot paint"></span>Paint 事件</span>
+    <span><span class="dot res"></span>外部资源耗时（slow.css / slow.png）</span>
+  </div>
+  <div id="log"></div>
+
+<script>
+(function(){
+  const logEl   = document.getElementById('log');
+  const statsEl = document.getElementById('stats');
+  const phaseBody = document.getElementById('phaseBody');
+  const paintBody = document.getElementById('paintBody');
+  const wfAxis    = document.getElementById('wfAxis');
+  const btnReload = document.getElementById('btnReload');
+  const btnClear  = document.getElementById('btnClear');
+
+  // ===== 测量钩子（headless 抓取契约）=====
+  window.__phases = null;   // {dns,tcp,tls,ttfb,download,domParse,domInteractive,domContentLoaded,loadEventEnd,fp,fcp,lcp}
+  window.__res    = null;   // [{name,start,dur}...] slow.css / slow.png
+  window.__events = null;   // [DOMContentLoaded, load] 时刻
+
+  function $(id){ return document.getElementById(id); }
+  function log(cls, text){
+    const line = document.createElement('div');
+    line.className = 'logline ' + cls;
+    line.textContent = '[' + performance.now().toFixed(1).padStart(8) + 'ms] ' + text;
+    logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  const nav = performance.getEntriesByType('navigation')[0] || {};
+
+  // ===== 阶段拆分 =====
+  // 注意：这些值在脚本执行期间可能尚未就绪（如 domInteractive 解析完才设置），
+  // 因此 phases 必须在每次导出/渲染前重建，实时读 nav，不能冻结在对象字面量里。
+  function buildPhases(){
+    const hasTls = !!nav.secureConnectionStart;
+    return {
+      dns:      { start: nav.domainLookupStart,  end: nav.domainLookupEnd,   color:'var(--dns)',   desc:'域名解析' },
+      tcp:      { start: nav.connectStart,       end: nav.secureConnectionStart || nav.connectEnd, color:'var(--tcp)', desc:'TCP 三次握手' },
+      ttfb:     { start: nav.requestStart,       end: nav.responseStart,     color:'var(--ttfb)',  desc:'服务器处理→首字节' },
+      download: { start: nav.responseStart,      end: nav.responseEnd,       color:'var(--dl)',    desc:'下载 HTML' },
+      // Chrome 151+ 已移除 domLoading：解析耗时用 responseEnd → domInteractive 衡量
+      domParse: { start: nav.responseEnd,         end: nav.domInteractive,    color:'var(--parse)', desc:'HTML 解析 → DOMInteractive（含被阻塞的脚本等待）' },
+      ...(hasTls ? { tls: { start: nav.secureConnectionStart, end: nav.connectEnd, color:'var(--tls)', desc:'TLS 握手（HTTPS）' } } : {}),
+    };
+  }
+  let phases = buildPhases();
+
+  // 关键渲染点
+  const paints = [];
+  const events = [];
+
+  function ms(v){ return (v == null || v === 0) ? '-' : (+v).toFixed(1); }
+  function fmt(v){ return v == null ? '-' : (+v).toFixed(1) + 'ms'; }
+
+  function dur(p){
+    if (!p || p.start == null || p.end == null) return null;
+    if (p.start === 0 && p.end === 0) return null;
+    if (p.end === 0) return null;   // 尚未到达该节点（如解析未完成）
+    return Math.max(0, p.end - p.start);
+  }
+
+  // ===== 渲染瀑布图 =====
+  function renderWaterfall(){
+    phases = buildPhases();   // 实时重建
+    const LCP = paints.find(p => p.name === 'LCP');
+    const FCP = paints.find(p => p.name === 'first-contentful-paint');
+    const end = Math.max(LCP ? LCP.time : 0, nav.loadEventEnd || 0, nav.domContentLoadedEventEnd || 0, 1);
+    wfAxis.innerHTML = '';
+    const H = 38, topPad = 8;
+    // 时间刻度
+    const ticks = 4;
+    for (let i = 0; i <= ticks; i++){
+      const t = (end * i / ticks);
+      const tEl = document.createElement('div');
+      tEl.className = 'wf-tick';
+      tEl.style.left = (i / ticks * 100) + '%';
+      tEl.style.top = H + 'px';
+      tEl.textContent = t.toFixed(0);
+      wfAxis.appendChild(tEl);
+    }
+    const mk = (label, start, duration, color, extra) => {
+      if (start == null || duration == null || duration <= 0) return;
+      const el = document.createElement('div');
+      el.className = 'wf-seg';
+      el.style.background = color;
+      el.style.left = (start / end * 100) + '%';
+      el.style.width = Math.max((duration / end * 100), 1.5) + '%';
+      el.innerHTML = '<span>' + label + ' ' + extra + '</span>';
+      wfAxis.appendChild(el);
+    };
+    // 每个阶段一排（避免不同阶段共用纵轴拥挤），共 6+1 行
+    const rows = [];
+    for (const k in phases) rows.push(k);
+    rows.push('FP/FCP/LCP');
+    wfAxis.style.height = (topPad + rows.length * H) + 'px';
+    let row = 0;
+    for (const k of rows){
+      if (k === 'FP/FCP/LCP'){
+        for (const p of paints){
+          const color = p.name === 'LCP' ? 'var(--bad)' : 'var(--paint)';
+          mk(p.name, p.time, 1, color, '');
+        }
+      } else {
+        const p = phases[k];
+        mk(k, p.start, dur(p), p.color, '');
+      }
+      row++;
+    }
+    // 时间轴基准线
+    const axis = document.createElement('div');
+    axis.className = 'lbl';
+    axis.style.top = (topPad + rows.length * H) + 'px';
+    axis.textContent = '0ms ← ' + end.toFixed(0) + 'ms';
+    wfAxis.appendChild(axis);
+  }
+
+  // ===== 阶段表 =====
+  function renderPhases(){
+    phases = buildPhases();   // 实时重建
+    phaseBody.innerHTML = '';
+    const rows = [];
+    for (const k in phases) rows.push({ name: k, p: phases[k] });
+    const LCP = paints.find(p => p.name === 'LCP');
+    const FCP = paints.find(p => p.name === 'first-contentful-paint');
+    const rows2 = [
+      { name: 'FP / FCP / LCP', p: { start: (FCP ? FCP.time : 0), end: (LCP ? LCP.time : 0), color:'', desc: FCP ? ('FP→FCP→LCP 渲染推进，FCP=' + FCP.time.toFixed(1) + 'ms' + (LCP ? '，LCP=' + LCP.time.toFixed(1) + 'ms' : '')) : '等待渲染…' } },
+    ];
+    for (const r of rows.concat(rows2)){
+      const tr = document.createElement('tr');
+      const d = dur(r.p);
+      const isHot = r.name === 'ttfb' || r.name === 'lcp';
+      tr.innerHTML =
+        '<td>' + r.name + '</td>' +
+        '<td style="color:var(--muted)">' + r.p.desc + '</td>' +
+        '<td class="num">' + ms(r.p.start) + ' → ' + ms(r.p.end) + '</td>' +
+        '<td class="num ' + (isHot ? 'hot' : '') + '">' + (d == null ? '-' : d.toFixed(1) + 'ms') + '</td>';
+      phaseBody.appendChild(tr);
+    }
+  }
+
+  // ===== 关键点表 =====
+  function renderPaints(){
+    paintBody.innerHTML = '';
+    const rows = [
+      { n:'FP', t: paints.find(p=>p.name==='first-paint'), d:'首次绘制像素' },
+      { n:'FCP', t: paints.find(p=>p.name==='first-contentful-paint'), d:'首个内容绘制（核心）' },
+      { n:'LCP', t: paints.find(p=>p.name==='LCP'), d:'最大内容绘制（核心）' },
+      { n:'DOMContentLoaded', t: { time: nav.domContentLoadedEventEnd }, d:'DOM 解析完成 + 阻塞脚本执行完' },
+      { n:'load', t: { time: nav.loadEventEnd }, d:'页面所有同步资源加载完成' },
+    ];
+    for (const r of rows){
+      const tr = document.createElement('tr');
+      const t = r.t && r.t.time;
+      tr.innerHTML =
+        '<td style="color:var(--paint);font-weight:600">' + r.n + '</td>' +
+        '<td class="num">' + fmt(t) + '</td>' +
+        '<td style="color:var(--muted)">' + r.d + '</td>';
+      paintBody.appendChild(tr);
+    }
+  }
+
+  // ===== 汇总到 window.__phases（headless 契约）=====
+  function exportPhases(){
+    phases = buildPhases();   // 实时重建，避免读到冻结的旧值
+    const FCP = paints.find(p => p.name === 'first-contentful-paint');
+    const LCP = paints.find(p => p.name === 'LCP');
+    window.__phases = {
+      dns: dur(phases.dns), tcp: dur(phases.tcp), tls: dur(phases.tls),
+      ttfb: dur(phases.ttfb), download: dur(phases.download),
+      domParse: dur(phases.domParse),
+      domInteractive: nav.domInteractive,
+      domContentLoaded: nav.domContentLoadedEventEnd,
+      loadEventEnd: nav.loadEventEnd,
+      fp: (paints.find(p=>p.name==='first-paint')||{}).time,
+      fcp: FCP ? FCP.time : null,
+      lcp: LCP ? LCP.time : null,
+      scheme: location.protocol,
+      ua: navigator.userAgent
+    };
+    renderWaterfall();
+  }
+
+  // ===== Paint / LCP 观察 =====
+  const paintObs = new PerformanceObserver(list => {
+    for (const e of list.getEntries()){
+      paints.push({ name: e.name, time: e.startTime });
+      log('paint', '[Paint] ' + e.name + ' @ ' + e.startTime.toFixed(1) + 'ms');
+      exportPhases(); renderPaints();
+    }
+  });
+  paintObs.observe({ type: 'paint', buffered: true });
+
+  const lcpObs = new PerformanceObserver(list => {
+    const entries = list.getEntries();
+    const last = entries[entries.length - 1];
+    const existing = paints.findIndex(p => p.name === 'LCP');
+    const lcpEntry = { name: 'LCP', time: last.startTime };
+    if (existing >= 0) paints[existing] = lcpEntry; else paints.push(lcpEntry);
+    log('paint', '[LCP] 最大内容 @ ' + last.startTime.toFixed(1) + 'ms' + (last.size ? (' (size=' + Math.round(last.size) + ')') : ''));
+    exportPhases(); renderPaints();
+  });
+  lcpObs.observe({ type: 'largest-contentful-paint', buffered: true });
+
+  // ===== 外部资源耗时 =====
+  function collectRes(){
+    const items = performance.getEntriesByType('resource')
+      .filter(r => /slow\.(css|png)/.test(r.name))
+      .map(r => ({ name: r.name.split('/').pop().split('?')[0], start: Math.round(r.startTime), dur: Math.round(r.duration) }));
+    window.__res = items;
+    for (const it of items){
+      log('res', '[资源] ' + it.name + ' 于 ' + it.start + 'ms 发起，耗时 ' + it.dur + 'ms' +
+          (it.name === 'slow.css' ? '  ← <head> 里，阻塞渲染' : '  ← <body> 里，不阻塞解析，但可能成为 LCP'));
+    }
+  }
+  window.addEventListener('load', () => {
+    log('sys', '—— load 事件：所有同步资源加载完成 ——');
+    events.push({ name:'load', time: performance.now() });
+    collectRes();
+    setTimeout(() => { exportPhases(); renderWaterfall(); renderPhases(); }, 50);
+    statsEl.innerHTML = '总耗时(load) ' + performance.now().toFixed(0) + 'ms';
+  });
+
+  document.addEventListener('DOMContentLoaded', () => {
+    events.push({ name:'DOMContentLoaded', time: performance.now() });
+    window.__events = events.slice();
+    log('sys', '—— DOMContentLoaded：DOM 解析完成 ——');
+  });
+
+  btnReload.onclick = () => location.reload();
+  btnClear.onclick  = () => { logEl.innerHTML = ''; };
+
+  // 首次渲染表格（等资源 + paint）
+  setTimeout(() => { exportPhases(); renderPhases(); renderPaints(); }, 300);
+})();
+</script>
+</body>
+</html>

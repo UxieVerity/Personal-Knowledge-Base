@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Vue / React / Element Plus 的 XSS 防御实测</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --border: #2a2f3a;
+    --fg: #e6e9ef; --muted: #9aa3b2; --accent: #5b9dff;
+    --ok: #3ecf8e; --bad: #ff5f5f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.7 "Segoe UI", system-ui, sans-serif; padding: 32px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-bottom: 24px; }
+  h2 { font-size: 15px; margin: 28px 0 12px; color: var(--accent); border-left: 3px solid var(--accent); padding-left: 8px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+  .tag.ok { background: rgba(62,207,142,.15); color: var(--ok); }
+  .tag.bad { background: rgba(255,95,95,.15); color: var(--bad); }
+  .tag.info { background: rgba(91,157,255,.15); color: var(--accent); }
+  code { background: #0d0f14; border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  .out { margin-top: 8px; padding: 10px; background: #0d0f14; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; min-height: 36px; word-break: break-all; }
+  .danger { border-color: rgba(255,95,95,.4); }
+  input[type=text] { background: #0d0f14; border: 1px solid var(--border); color: var(--fg); padding: 6px 10px; border-radius: 6px; width: 320px; }
+  button { background: var(--accent); color: #fff; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+  .attack { color: var(--bad); }
+  .pwned-1 { color: var(--bad); font-weight: 700; }
+  .pwned-0 { color: var(--ok); font-weight: 700; }
+  .status-line { font-size: 15px; }
+</style>
+</head>
+<body>
+<h1>Vue / React / Element Plus 的 XSS 防御实测</h1>
+<div class="sub">默认插值转义 vs 逃逸口（v-html / dangerouslySetInnerHTML）&nbsp;·&nbsp;载荷：<code>&lt;img src=x onerror="window.__pwned=1"&gt;</code></div>
+
+<h2>一、默认插值：框架默认转义</h2>
+<div class="card">
+  <div class="row">
+    <span class="tag info">Vue 3</span>
+    <code>{{ userInput }}</code>
+    <span class="tag ok">默认转义</span>
+  </div>
+  <div id="vue-default-mount" class="out">加载中…</div>
+</div>
+<div class="card">
+  <div class="row">
+    <span class="tag info">React 18</span>
+    <code>{userInput}</code>
+    <span class="tag ok">默认转义</span>
+  </div>
+  <div id="react-default-mount" class="out">加载中…</div>
+</div>
+
+<h2>二、逃逸口：显式插入 HTML</h2>
+<div class="card danger">
+  <div class="row">
+    <span class="tag info">Vue</span>
+    <code>v-html</code>
+    <span class="tag bad">🚨 XSS 缺口</span>
+  </div>
+  <div id="vue-vhtml-mount" class="out">加载中…</div>
+</div>
+<div class="card danger">
+  <div class="row">
+    <span class="tag info">React</span>
+    <code>dangerouslySetInnerHTML</code>
+    <span class="tag bad">🚨 XSS 缺口</span>
+  </div>
+  <div id="react-dsh-mount" class="out">加载中…</div>
+</div>
+
+<h2>三、Element Plus：组件默认值转义</h2>
+<div class="card">
+  <div class="row">
+    <span class="tag info">el-input</span>
+    <code>v-model</code>
+    <span class="tag ok">默认转义</span>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <input type="text" id="el-in" placeholder="输入任意内容（含标签）" style="width:280px">
+    <button onclick="setEl()">回显到 el-input</button>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <span class="tag info">el-input 值</span>
+    <div id="el-input-mount"></div>
+  </div>
+  <div id="el-out" class="out" style="margin-top:8px">（点击按钮后显示）</div>
+</div>
+
+<h2>四、检测结果</h2>
+<div class="card">
+  <div class="row status-line">
+    <span><b>window.__pwned =</b> <span id="pwned-val" class="pwned-0">检测中…</span></span>
+    <span class="sub">onerror 是否真的执行（=1 说明攻击成功，逃逸口放行了 XSS）</span>
+  </div>
+</div>
+
+<!-- Vue 3 (CDN) -->
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<!-- React 18 (CDN) -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Element Plus (CDN) -->
+<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+<script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
+
+<script>
+const ATTACK = '<img src=x onerror="window.__pwned=1">';
+
+/* ---------- Vue 3：默认插值转义 ---------- */
+const vueDefault = Vue.createApp({
+  setup() { return { userInput: ATTACK }; },
+  template: `<div>{{ userInput }}</div>`,
+});
+vueDefault.mount('#vue-default-mount');
+
+/* ---------- Vue 3：v-html 逃逸口 ---------- */
+const vueVHtml = Vue.createApp({
+  setup() { return { rawHTML: ATTACK }; },
+  template: `<div v-html="rawHTML"></div>`,
+});
+vueVHtml.mount('#vue-vhtml-mount');
+
+/* ---------- React 18：默认转义 ---------- */
+ReactDOM.createRoot(document.getElementById('react-default-mount')).render(
+  React.createElement('div', null, ATTACK)
+);
+
+/* ---------- React 18：dangerouslySetInnerHTML 逃逸口 ---------- */
+ReactDOM.createRoot(document.getElementById('react-dsh-mount')).render(
+  React.createElement('div', { dangerouslySetInnerHTML: { __html: ATTACK } })
+);
+
+/* ---------- Element Plus：el-input v-model ---------- */
+const elApp = Vue.createApp({
+  setup() { return { val: ATTACK }; },
+  template: `<el-input v-model="val" style="width:280px"></el-input>`,
+});
+elApp.use(ElementPlus).mount('#el-input-mount');
+
+/* ---------- 回显按钮：设 DOM value（纯文本） ---------- */
+window.setEl = function () {
+  const v = document.getElementById('el-in').value;
+  const input = document.querySelector('#el-input-mount input');
+  if (input) input.value = v;
+  const esc = String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  document.getElementById('el-out').innerHTML =
+    '<code>input.value = </code> <span class="tag ok">设的是 DOM value（纯文本，不当 HTML）</span><br>' + esc;
+};
+
+/* ---------- 检测 onerror 是否执行 ---------- */
+setTimeout(() => {
+  const el = document.getElementById('pwned-val');
+  const pwned = !!window.__pwned;
+  el.textContent = pwned ? '1 🚨' : '0 ✅';
+  el.className = pwned ? 'pwned-1' : 'pwned-0';
+}, 1500);
+</script>
+</body>
+</html>

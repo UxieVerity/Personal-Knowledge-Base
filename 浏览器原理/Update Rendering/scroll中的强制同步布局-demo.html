@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>scroll 中的强制同步布局（Forced Synchronous Layout）</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#171a21; --line:#2a2f3a;
+  --ok:#37d67a; --warn:#ff9f43; --bad:#ff6b6b;
+  --muted:#8b93a7; --text:#e8ecf4; --acc:#4db6ff; --acc2:#7c4dff;
+}
+*{ box-sizing:border-box; margin:0; padding:0; }
+body{ background:var(--bg); color:var(--text); font:14px/1.6 system-ui,"Segoe UI",sans-serif; padding:24px; max-width:1000px; margin:0 auto; }
+h1{ font-size:20px; margin-bottom:4px; }
+.sub{ color:var(--muted); margin-bottom:16px; }
+.controls{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; align-items:center; }
+button{ background:#232936; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 13px; font-size:13px; cursor:pointer; }
+button:hover{ background:#2c3342; }
+button.active{ background:#3d4f66; border-color:#5a7ba6; }
+button:disabled{ opacity:.45; cursor:default; }
+select{ background:#232936; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 10px; font-size:13px; }
+.stage{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+#scroller{ height:260px; overflow-y:auto; border:1px solid var(--line); border-radius:10px; background:#0b0d12; }
+#stick{ position:sticky; top:0; height:34px; display:flex; align-items:center; padding:0 12px;
+  background:linear-gradient(135deg,var(--acc),var(--acc2)); color:#fff; font-weight:600; font-size:12px; z-index:5; }
+.items{ padding:6px 8px; }
+.item{ height:26px; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted);
+  border-bottom:1px dashed var(--line); }
+.item .idx{ width:52px; color:var(--acc); font-family:ui-monospace,Consolas,monospace; }
+.item .bar{ height:10px; border-radius:4px; background:linear-gradient(90deg,#232936,#2c3342); }
+.item:nth-child(3n) .bar{ width:60%; }
+.item:nth-child(3n+1) .bar{ width:40%; }
+.item:nth-child(3n+2) .bar{ width:80%; }
+.legend{ display:flex; gap:16px; margin:10px 0; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+.dot{ display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+#result{ background:#0b0d12; border:1px solid var(--line); border-radius:10px; padding:12px; margin-top:10px; font:12px/1.7 ui-monospace,Consolas,monospace; min-height:60px; }
+.resline{ white-space:pre; }
+#log{ background:#0b0d12; border:1px solid var(--line); border-radius:10px; padding:12px; height:220px; overflow-y:auto; font:12px/1.7 ui-monospace,Consolas,monospace; margin-top:12px; }
+.logline{ white-space:pre; }
+.sys{ color:var(--muted); font-style:italic; }
+.ok{ color:var(--ok); } .warn{ color:var(--warn); } .bad{ color:var(--bad); } .acc{ color:var(--acc); }
+table.bench{ width:100%; border-collapse:collapse; margin-top:10px; font:12px/1.5 ui-monospace,Consolas,monospace; }
+table.bench th, table.bench td{ border:1px solid var(--line); padding:5px 8px; text-align:left; }
+table.bench th{ background:#232936; color:var(--muted); font-weight:600; }
+</style>
+</head>
+<body>
+<h1>scroll 中的强制同步布局（Forced Synchronous Layout / Layout Thrashing）</h1>
+<div class="sub">同一个滚动容器、同样的滚动量，只改 scroll 回调里的「读写姿势」，对比每次 scroll 事件的耗时与强制布局成本。</div>
+
+<div class="controls">
+  <select id="mode">
+    <option value="read">① 只读不写（读 scrollTop + gBCR）</option>
+    <option value="write">② 只写不读（写 transform）</option>
+    <option value="thrash">③ 读写交替（读→写top→再读，最坏）</option>
+    <option value="raf">④ rAF 批处理（scroll 只记值，rAF 写入）</option>
+  </select>
+  <button id="btnBench">▶ 自动基准（4 种写法 × 200 帧）</button>
+  <button id="btnExp1">🧪 实验1：单次强制布局成本</button>
+  <button id="btnClear">🗑 清空日志</button>
+</div>
+
+<div class="stage">
+  <div class="legend">
+    <span><span class="dot" style="background:var(--acc)"></span>吸顶条 #stick</span>
+    <span><span class="dot" style="background:var(--muted)"></span>500 个列表项（layout 成本来源）</span>
+  </div>
+  <div id="scroller">
+    <div id="stick">吸顶条 —— 用 transform / top 跟随滚动</div>
+    <div class="items" id="items"></div>
+  </div>
+  <div style="color:var(--muted); font-size:12px; margin-top:8px;">
+    滚轮 / 拖动滚动条观察；「自动基准」会以 200 帧匀速滚动 #scroller，并统计每次 scroll 事件的耗时。
+  </div>
+</div>
+
+<div id="result">基准结果会显示在这里…</div>
+<div id="log"></div>
+
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+  const scroller = $('#scroller'), items = $('#items'), stick = $('#stick');
+  const resultEl = $('#result'), logEl = $('#log');
+  const btnBench = $('#btnBench'), btnExp1 = $('#btnExp1'), btnClear = $('#btnClear');
+
+  // 造 500 个列表项，让 layout 有一定成本
+  for (let i=0;i<500;i++){
+    const d=document.createElement('div'); d.className='item';
+    d.innerHTML = `<span class="idx">#${i}</span><span class="bar"></span>`;
+    items.appendChild(d);
+  }
+  const firstItem = items.firstElementChild;
+  let benchBusy = false;
+
+  function log(cls, text){
+    const line=document.createElement('div'); line.className='logline '+cls;
+    line.textContent='['+performance.now().toFixed(2).padStart(9)+'ms] '+text;
+    logEl.appendChild(line); logEl.scrollTop=logEl.scrollHeight;
+  }
+
+  // ---------- 实验1：单次强制同步布局的成本 ----------
+  async function runExp1(){
+    const t = firstItem;
+    const N = 2000;
+    stick.style.transform=''; stick.style.top='';
+    void scroller.offsetHeight; void t.offsetHeight;   // 冷启动，清干净样式
+
+    // 1) 干净读取（样式无变化 → 不重排，近似走缓存）
+    let t0=performance.now();
+    for(let i=0;i<N;i++){ void t.offsetHeight; }
+    const cleanMs = performance.now()-t0;
+
+    // 2) 脏读取（每次读前改 width 使布局失效 → 读必须同步重排）
+    let t0b=performance.now();
+    for(let i=0;i<N;i++){
+      t.style.width=(i%7)+'px';        // 使 layout 失效（但还没重排）
+      void t.offsetHeight;              // ← 这次读必须立即 flush layout
+    }
+    const dirtyMs = performance.now()-t0b;
+
+    const perClean=(cleanMs/N*1e6).toFixed(0);
+    const perDirty=(dirtyMs/N*1e6).toFixed(0);
+    const ratio=(dirtyMs/cleanMs).toFixed(1);
+    window.__exp1 = {cleanMs, dirtyMs, ratio, perClean, perDirty};
+    resultEl.innerHTML = `
+<div class="resline"><span class="acc">实验1 · 单次读取 offsetHeight 的成本（N=${N} 次，同一元素）</span></div>
+<div class="resline">干净读取（样式无变化）: <span class="ok">${cleanMs.toFixed(1)}ms</span> 总 / 每读 ≈ ${perClean}µs</div>
+<div class="resline">脏读取（读前改了 width）: <span class="bad">${dirtyMs.toFixed(1)}ms</span> 总 / 每读 ≈ ${perDirty}µs  ← 强制同步布局</div>
+<div class="resline">脏读取慢 <span class="bad">${ratio}×</span></div>`;
+    log('sys','实验1 完成：脏读取（强制布局）≈ '+ratio+'× 干净读取');
+  }
+  btnExp1.onclick = runExp1;
+
+  // ---------- 4 种 scroll 写法 ----------
+  const STEPS = 200;
+  const handlers = {
+    // ① 只读不写：读 scrollTop + 读一个元素的 gBCR
+    read(ev, st){
+      const t0=performance.now();
+      void scroller.scrollTop;
+      void firstItem.getBoundingClientRect().top;
+      st.dt += performance.now()-t0; st.count++;
+    },
+    // ② 只写不读：只写合成器属性 transform，不碰几何
+    write(ev, st){
+      const t0=performance.now();
+      stick.style.transform = 'translateY(' + ((st.count*2)%60) + 'px)';
+      st.dt += performance.now()-t0; st.count++;
+    },
+    // ③ 读写交替：读→写 top(使布局失效)→再读 offsetHeight(强制重排) = layout thrashing
+    thrash(ev, st){
+      const t0=performance.now();
+      void scroller.scrollTop;
+      stick.style.top = (st.count%40)+'px';   // 写 top → 布局失效
+      void stick.offsetHeight;                 // 读 → 强制重排
+      st.dt += performance.now()-t0; st.count++;
+    },
+    // ④ rAF 批处理：scroll 只记一个数（唯一一次读），写入挪到下一帧 rAF 做一次
+    raf(ev, st){
+      const t0=performance.now();
+      st.last = scroller.scrollTop;
+      st.dt += performance.now()-t0; st.count++;
+    }
+  };
+
+  function makeRafApply(st){
+    const apply=()=>{
+      if(st.rafMode){
+        const t0=performance.now();
+        stick.style.transform = 'translateY(' + ((st.last||0)%60) + 'px)';
+        st.rafDt += performance.now()-t0; st.rafCount++;
+      }
+      if(st.running) requestAnimationFrame(apply);
+    };
+    return apply;
+  }
+
+  async function runBench(){
+    if(benchBusy) return; benchBusy=true;
+    btnBench.disabled=true;
+    const rows=[];
+    log('sys','基准开始：4 种写法 × '+STEPS+' 帧匀速滚动…');
+    for(const mode of ['read','write','thrash','raf']){
+      stick.style.transform=''; stick.style.top=''; stick.style.position='sticky';
+      scroller.scrollTop=0;
+      void scroller.offsetHeight; void stick.offsetHeight;
+      await nextFrame();
+
+      const st={dt:0,count:0,rafDt:0,rafCount:0,last:0,running:true,rafMode:(mode==='raf')};
+      const rafApply = makeRafApply(st);
+      if(mode==='raf') requestAnimationFrame(rafApply);
+      const listener=(ev)=>handlers[mode](ev,st);
+      scroller.addEventListener('scroll', listener);
+
+      const t0=performance.now();
+      for(let i=0;i<STEPS;i++){
+        scroller.scrollTop += 6;
+        await nextFrame();
+      }
+      const totalMs=performance.now()-t0;
+      await new Promise(r=>setTimeout(r,100));   // 等最后一个 scroll 事件落定
+      scroller.removeEventListener('scroll', listener);
+      st.running=false;
+
+      const avg = st.count? (st.dt/st.count*1e6).toFixed(0) : '-';
+      const rafAvg = st.rafCount? (st.rafDt/st.rafCount*1e6).toFixed(0) : '-';
+      rows.push({mode, events:st.count, total:totalMs.toFixed(0), avg, rafAvg, rafCount:st.rafCount});
+      log('sys', mode+' 完成：scroll 事件 '+st.count+' 次，handler 总耗时 '+st.dt.toFixed(1)+'ms，平均每次 '+avg+'µs'+(mode==='raf'?'（rAF 写入 '+rafAvg+'µs/次 × '+st.rafCount+' 次）':''));
+    }
+    benchBusy=false; btnBench.disabled=false;
+    window.__bench = rows;
+    renderResult(rows);
+    log('sys','基准完成 ✅ 结果见上方表格');
+  }
+  btnBench.onclick = runBench;
+
+  function renderResult(rows){
+    const names={read:'① 只读不写',write:'② 只写不读',thrash:'③ 读写交替',raf:'④ rAF 批处理'};
+    let h='<table class="bench"><tr><th>写法</th><th>scroll 事件数</th><th>平均每次 handler 耗时(µs)</th><th>滚动 200 帧总耗时(ms)</th><th>rAF 写入(µs/次)</th></tr>';
+    for(const r of rows){
+      const cls = r.mode==='thrash'?'bad':(r.mode==='read'?'warn':'ok');
+      h+=`<tr><td>${names[r.mode]}</td><td>${r.events}</td><td class="${cls}">${r.avg}</td><td>${r.total}</td><td>${r.rafAvg==='-'?'—':r.rafAvg}</td></tr>`;
+    }
+    h+='</table>';
+    resultEl.innerHTML = '<div class="resline acc">基准 · 同一容器同一滚动量 · 200 帧匀速滚动</div>'+h;
+  }
+
+  btnClear.onclick=()=>{ logEl.innerHTML=''; };
+  function nextFrame(){ return new Promise(r=>requestAnimationFrame(r)); }
+
+  // 供自动化/控制台调用
+  window.runBench = runBench;
+  window.runExp1  = runExp1;
+  window.__bench  = null;
+  window.__exp1   = null;
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Update Rendering 阶段：scroll / resize / rAF / RO / IO 顺序实测</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --line:#2a2f3a;
+    --raf:#ff9f43; --ro:#4db6ff; --scroll:#7bed9f; --resize:#ff6b81; --io:#a29bfe; --frame:#f6c945;
+    --muted:#8b93a7; --text:#e8ecf4;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:var(--bg); color:var(--text); font:14px/1.6 system-ui,"Segoe UI",sans-serif; padding:24px; max-width:980px; margin:0 auto; }
+  h1{ font-size:20px; margin-bottom:4px; }
+  .sub{ color:var(--muted); margin-bottom:14px; font-size:13px; }
+
+  /* 规范顺序横幅 */
+  .order{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin-bottom:14px;
+          font:12px/1.9 ui-monospace,Consolas,monospace; color:var(--muted); }
+  .order b{ color:#fff; }
+  .order .s{ color:var(--resize); } .order .sc{ color:var(--scroll); } .order .r{ color:var(--raf); }
+  .order .o{ color:var(--ro); } .order .i{ color:var(--io); }
+
+  /* 验证方法表 */
+  table{ width:100%; border-collapse:collapse; margin-bottom:14px; font-size:12.5px; }
+  th,td{ border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; }
+  th{ background:#1a1f2a; color:var(--muted); font-weight:600; white-space:nowrap; }
+  td code{ background:#0b0d12; padding:1px 5px; border-radius:4px; color:#c8d3e6; }
+
+  .controls{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; align-items:center; }
+  button{ background:#232936; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; }
+  button:hover{ background:#2c3342; } button.active{ background:#3d4f66; border-color:#5a7ba6; }
+  .stats{ font-size:12px; color:var(--muted); margin-left:auto; white-space:nowrap; }
+
+  .stage{ display:flex; flex-wrap:wrap; gap:14px; margin-bottom:14px; }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .panel h3{ font-size:13px; margin-bottom:8px; color:var(--muted); font-weight:600; }
+  #scroller{ width:280px; height:150px; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#0b0d12; padding:8px; }
+  #scroller .item{ height:38px; margin-bottom:6px; border-radius:6px; background:#1d222c; display:flex; align-items:center; padding:0 10px; font-size:12px; color:var(--muted); }
+  #scroller .item.io{ background:#332c52; border:1px solid var(--io); color:#c8bfff; }
+  #box{ width:100px; height:48px; border-radius:8px; background:linear-gradient(135deg,#4db6ff,#7c4dff);
+        display:flex; align-items:center; justify-content:center; color:#fff; font-weight:600; }
+  iframe{ width:220px; height:60px; border:1px dashed var(--line); border-radius:8px; background:#0b0d12; }
+
+  .legend{ display:flex; gap:14px; margin:0 0 10px; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+  .dot{ display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  .dot.raf{background:var(--raf);} .dot.ro{background:var(--ro);} .dot.scroll{background:var(--scroll);}
+  .dot.resize{background:var(--resize);} .dot.io{background:var(--io);}
+
+  #log{ background:#0b0d12; border:1px solid var(--line); border-radius:10px; padding:12px;
+        height:360px; overflow-y:auto; font:12px/1.7 ui-monospace,Consolas,monospace; }
+  .logline{ white-space:pre; }
+  .raf{color:var(--raf)} .ro{color:var(--ro)} .scroll{color:var(--scroll)}
+  .resize{color:var(--resize)} .io{color:var(--io)} .frame{color:var(--frame)} .sys{color:var(--muted);font-style:italic}
+</style>
+</head>
+<body>
+  <h1>Update Rendering 阶段：scroll / resize / rAF / RO / IO 顺序实测</h1>
+  <div class="sub">每个渲染帧内五类事件的真实派发顺序。日志带帧号标记，验证「谁先谁后」。</div>
+
+  <div class="order">
+    <b>规范顺序</b> (HTML Living Standard §8.1.7.3 update the rendering)：
+    <span class="s">resize 事件</span> → <span class="sc">scroll 事件</span> → <span class="r">rAF 回调</span> → 样式/布局 → <span class="o">ResizeObserver 递送</span> → <span class="i">IO 交叉计算</span> → Paint<br>
+    <b>要点</b>：<span class="s">resize</span> / <span class="sc">scroll</span> 事件在 <b>rAF 之前</b>派发；<span class="o">RO</span> 在 rAF 之后；<span class="i">IO</span> 计算在渲染内、回调异步派发。
+  </div>
+
+  <table>
+    <tr><th>事件</th><th>本 demo 如何触发</th><th>派发时机</th></tr>
+    <tr><td><span class="scroll">scroll</span></td><td><code>rAF 回调里程序滚动容器 (scrollTop+=2)</code>，也可手动滚动</td><td>渲染阶段 step 9 scroll steps，<b>先于 rAF</b></td></tr>
+    <tr><td><span class="resize">resize</span></td><td>只能真实改变视口：<b>拖动本页窗口/预览面板宽度</b>；下方 iframe 子视口可自动化触发</td><td>渲染阶段 step 8 resize steps，<b>先于 rAF</b></td></tr>
+    <tr><td><span class="raf">rAF</span></td><td>每帧自动执行</td><td>step 14</td></tr>
+    <tr><td><span class="ro">ResizeObserver</span></td><td>每帧抖动 box 宽度</td><td>step 16（rAF 之后、layout 之后）</td></tr>
+    <tr><td><span class="io">IntersectionObserver</span></td><td>滚动使元素进出视口</td><td>step 19 计算，回调 <b>异步派发</b>（宏任务）</td></tr>
+  </table>
+
+  <h3 style="margin:0 0 8px;font-size:13px;color:var(--muted)">怎么验证（对照日志）</h3>
+  <table>
+    <tr><th>要验证的结论</th><th>操作方法</th><th>日志里看什么</th></tr>
+    <tr><td><b>scroll 在 rAF 之前</b></td><td>开启「🔄 自动滚动」</td><td>每条 <code>[scroll]</code> 都标记 "帧#N 的 scroll steps（rAF 之前）"，且排在 <code>[rAF] 帧#N</code> 前面</td></tr>
+    <tr><td><b>resize 在 rAF 之前</b></td><td><b>拖动本页窗口 / 预览面板宽度</b>（触发 window resize）</td><td>出现 <code>[resize] 视口变化 innerWidth=…</code>，位于当帧 rAF 之前</td></tr>
+    <tr><td><b>RO 在 rAF 之后</b></td><td>开启「🔄 抖动box(RO)」</td><td>每条 <code>[RO]</code> 都标记 "rAF#N 之后、layout 后送达"，排在 <code>[rAF] 帧#N</code> 后面</td></tr>
+    <tr><td><b>IO 回调异步</b></td><td>手动把滚动条拖到顶部/底部，让紫色 <b>■ IO 观察目标</b> 反复进出容器视口</td><td><code>[IO] 进入/离开视口</code> 出现，但时间戳与帧不严格对齐（作为宏任务派发）</td></tr>
+  </table>
+
+  <div class="controls">
+    <button id="btnPause">⏸ 暂停</button>
+    <button id="btnScroll" class="active">🔄 自动滚动</button>
+    <button id="btnBox" class="active">🔄 抖动box(RO)</button>
+    <button id="btnIframe" class="active">🔄 抖动iframe(resize)</button>
+    <button id="btnClear">🗑 清空日志</button>
+    <span class="stats" id="stats">…</span>
+  </div>
+
+  <div class="stage">
+    <div class="panel">
+      <h3>可滚动容器（scroll 验证）</h3>
+      <div id="scroller">
+        <div class="item">item 01</div><div class="item">item 02</div><div class="item">item 03</div>
+        <div class="item">item 04</div><div class="item">item 05</div><div class="item">item 06</div>
+        <div class="item">item 07</div><div class="item">item 08</div><div class="item">item 09</div>
+        <div class="item">item 10</div><div class="item">item 11</div><div class="item">item 12</div>
+        <div class="item io" id="ioTarget">■ IO 观察目标</div>
+        <div class="item">item 13</div><div class="item">item 14</div><div class="item">item 15</div>
+        <div class="item">item 16</div><div class="item">item 17</div><div class="item">item 18</div>
+        <div class="item">item 19</div><div class="item">item 20</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>抖动 box（ResizeObserver 验证）</h3>
+      <div id="box"><span id="boxW">100</span></div>
+    </div>
+    <div class="panel">
+      <h3>iframe 子视口（resize 自动化触发）</h3>
+      <iframe id="ifr" title="iframe-resize"></iframe>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px">程序改 iframe 宽 → 其 contentWindow 触发 resize</div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot frame"></span>帧标记</span>
+    <span><span class="dot raf"></span>rAF</span>
+    <span><span class="dot scroll"></span>scroll</span>
+    <span><span class="dot resize"></span>resize</span>
+    <span><span class="dot ro"></span>ResizeObserver</span>
+    <span><span class="dot io"></span>IntersectionObserver</span>
+  </div>
+
+  <div id="log"></div>
+
+<script>
+(function(){
+  const scroller = document.getElementById('scroller');
+  const box = document.getElementById('box');
+  const boxW = document.getElementById('boxW');
+  const ifr = document.getElementById('ifr');
+  const logEl = document.getElementById('log');
+  const statsEl = document.getElementById('stats');
+  const btnPause=document.getElementById('btnPause'), btnScroll=document.getElementById('btnScroll'),
+        btnBox=document.getElementById('btnBox'), btnIframe=document.getElementById('btnIframe'),
+        btnClear=document.getElementById('btnClear');
+
+  let running=true, autoScroll=true, autoBox=true, autoIframe=true, rafId=null, frame=0;
+  let nRaf=0,nScroll=0,nResize=0,nResizeIf=0,nRo=0,nIo=0;
+
+  function log(cls, text){
+    const line = document.createElement('div');
+    line.className = 'logline ' + cls;
+    line.textContent = '[' + performance.now().toFixed(1).padStart(9) + 'ms] ' + text;
+    logEl.appendChild(line);
+    while (logEl.childNodes.length > 500) logEl.removeChild(logEl.firstChild);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function updStats(){
+    statsEl.innerHTML =
+      `scroll:${nScroll} resize:${nResize} ifr:${nResizeIf} rAF:${nRaf} RO:${nRo} IO:${nIo} · 帧 ${frame}`;
+  }
+
+  // ===== scroll：rAF 里改 scrollTop，事件在【下一帧 step9】派发 =====
+  scroller.addEventListener('scroll', () => {
+    nScroll++;
+    // 此刻 frame = 上一已完成帧；本事件属于帧#frame+1 的 scroll steps（先于其 rAF）
+    log('scroll', `[scroll] scrollTop=${scroller.scrollTop} → 帧#${frame+1} 的 scroll steps（rAF 之前）`);
+    updStats();
+  }, {passive:true});
+
+  // ===== resize：window 视口变化（拖动窗口/预览面板触发）=====
+  window.addEventListener('resize', () => {
+    nResize++;
+    log('resize', `[resize] 视口变化 innerWidth=${window.innerWidth}px → 帧#${frame+1} 的 resize steps（rAF 之前）`);
+    updStats();
+  });
+
+  // ===== resize(iframe)：改 iframe 元素宽度 → contentWindow 触发 resize =====
+  // 用 srcdoc 内联脚本（同源）在子视口里注册 resize 监听，比 onload+addEventListener 更稳
+  ifr.srcdoc = '<!doctype html><html><body style="margin:0;background:#0b0d12">' +
+    '<script>window.addEventListener("resize", function(){ window.parent.postMessage({t:"ifr-resize", w: window.innerWidth}, "*"); });<\/script>' +
+    '</body></html>';
+  window.addEventListener('message', (ev) => {
+    if (ev.data && ev.data.t === 'ifr-resize') {
+      nResizeIf++;
+      log('resize', `[resize-iframe] iframe 子视口变化 → 宽 ${ev.data.w}px`);
+      updStats();
+    }
+  });
+
+  // 全局错误捕获：任何异常都打到日志，避免"静默死掉"
+  window.addEventListener('error', (e) => log('sys', `[error] ${e.message}`));
+
+  // ===== RO：rAF 之后、layout 之后递送 =====
+  const ro = new ResizeObserver(() => {
+    nRo++;
+    const w = box.getBoundingClientRect().width.toFixed(1);
+    log('ro', `[RO] box 尺寸变化 → 宽 ${w}px（rAF#${frame} 之后、layout 后送达）`);
+    updStats();
+  });
+  ro.observe(box);
+
+  // ===== IO：交叉变化，回调异步派发 =====
+  const ioTarget = document.getElementById('ioTarget');
+  const io = new IntersectionObserver(entries => {
+    nIo++;
+    const e = entries[0];
+    log('io', `[IO] 观察目标${e.isIntersecting ? '进入' : '离开'}视口 ratio=${e.intersectionRatio.toFixed(2)}（回调异步派发）`);
+    updStats();
+  }, {threshold:[0]});
+  io.observe(ioTarget);
+
+  // ===== 主循环 =====
+  function tick(){
+    try {
+      frame++; nRaf++;
+      const w = 100 + Math.round(50 * Math.sin(frame/6));
+      if (autoBox){
+        box.style.width = w + 'px'; boxW.textContent = w;
+      }
+      log('raf', `[rAF] 帧#${frame}：box宽=${autoBox?w:box.clientWidth}px 滚动容器+2 iframe宽=${Math.round(ifr.clientWidth)}px`);
+      if (autoScroll){
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        scroller.scrollTop = (scroller.scrollTop + 2) % (max + 1);
+      }
+      if (autoIframe){
+        const iw = 220 + Math.round(30 * Math.sin(frame/5));
+        ifr.style.width = iw + 'px';
+      }
+      updStats();
+    } catch(err){ log('sys', `[tick-error] ${err.message}`); }
+    if (running) rafId = requestAnimationFrame(tick);
+  }
+  rafId = requestAnimationFrame(tick);
+
+  btnPause.onclick = () => {
+    running = !running;
+    if (running) rafId = requestAnimationFrame(tick);
+    else { cancelAnimationFrame(rafId); rafId = null; }
+    btnPause.textContent = running ? '⏸ 暂停' : '▶ 继续';
+    log('sys', running ? '—— 继续 ——' : '—— 已暂停（rAF 停止，其余事件不再触发）——');
+  };
+  btnScroll.onclick = () => { autoScroll=!autoScroll; btnScroll.classList.toggle('active',autoScroll); log('sys', autoScroll?'自动滚动开（rAF 里 scrollTop+2）':'自动滚动关（可手动滚动容器验证）'); };
+  btnBox.onclick    = () => { autoBox=!autoBox;    btnBox.classList.toggle('active',autoBox);    log('sys', autoBox?'box 抖动开（触发 RO）':'box 抖动关'); };
+  btnIframe.onclick = () => { autoIframe=!autoIframe; btnIframe.classList.toggle('active',autoIframe); log('sys', autoIframe?'iframe 抖动开（触发子视口 resize）':'iframe 抖动关'); };
+  btnClear.onclick = () => { logEl.innerHTML=''; };
+  log('sys', '启动：每帧 rAF 里滚动容器+2 / 抖动 box / 抖动 iframe。拖动窗口宽度可验证 window resize。');
+  updStats();
+})();
+</script>
+</body>
+</html>

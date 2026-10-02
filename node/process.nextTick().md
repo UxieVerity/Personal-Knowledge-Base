@@ -39,5 +39,8 @@ console.log('end');
 
 ### node中cjs和mjs的nextTick执行差异
 
+[[nextTick.cjs]]
+[[nextTick.mjs]]
+
 - 在cjs中严格按照nextTick先执行再执行其他微任务
 - 再mjs中，ESM 顶层被 V8 的微任务检查点 “插队”，所以会先执行promise，再执行nextTick，不过在具体的事件回调中还是会按照先执行nextTick的顺序执行

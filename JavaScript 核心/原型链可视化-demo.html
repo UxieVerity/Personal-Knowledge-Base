@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>原型链可视化 · 可交互 demo</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --border: #2a2f3a;
+    --fg: #e6e9ef; --muted: #9aa3b2; --accent: #5b9dff;
+    --ok: #3ecf8e; --bad: #ff5f5f; --warn: #ffb84d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.7 "Segoe UI", system-ui, sans-serif; padding: 32px; max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-bottom: 24px; }
+  h2 { font-size: 15px; margin: 28px 0 12px; color: var(--accent); border-left: 3px solid var(--accent); padding-left: 8px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+  .tag.accent { background: rgba(91,157,255,.15); color: var(--accent); }
+  .tag.ok { background: rgba(62,207,142,.15); color: var(--ok); }
+  .tag.bad { background: rgba(255,95,95,.15); color: var(--bad); }
+  .tag.warn { background: rgba(255,184,77,.15); color: var(--warn); }
+  code { background: #0d0f14; border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  button { background: var(--accent); color: #fff; border: 0; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { opacity: .9; }
+  select { background: #0d0f14; border: 1px solid var(--border); color: var(--fg); padding: 6px 10px; border-radius: 6px; }
+
+  /* 原型链可视化 */
+  .chain { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; margin-top: 12px; }
+  .node {
+    background: #10141c; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; min-width: 150px; position: relative;
+  }
+  .node .name { font-weight: 700; font-size: 14px; }
+  .node .role { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .node .props { font-size: 11px; color: var(--muted); margin-top: 6px; font-family: Consolas, monospace; }
+  .node .props b { color: var(--fg); }
+  .node.self { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(91,157,255,.3); }
+  .node.null-node { border-style: dashed; color: var(--muted); }
+  .arrow { display: flex; align-items: center; color: var(--accent); font-size: 18px; padding: 0 6px; font-weight: 700; }
+  .arrow small { font-size: 10px; color: var(--muted); display: block; text-align: center; }
+
+  .legend { display: flex; gap: 16px; margin-top: 10px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 12px; height: 12px; border-radius: 3px; }
+
+  .fact-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+  .fact-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .fact-table td:first-child { color: var(--muted); width: 45%; }
+  .fact-table .yes { color: var(--ok); }
+  .fact-table .no { color: var(--bad); }
+</style>
+</head>
+<body>
+<h1>原型链可视化 · 可交互 demo</h1>
+<div class="sub">选一个对象/构造函数，看它的 <code>__proto__</code> 链如何逐级向上、最终指向 <code>null</code></div>
+
+<h2>选择要查看的对象</h2>
+<div class="card">
+  <div class="row">
+    <select id="target">
+      <option value="person">Person 实例（new Person('张三')）</option>
+      <option value="personProto">Person.prototype</option>
+      <option value="objectProto">Object.prototype</option>
+      <option value="personFn">Person 函数本身</option>
+      <option value="arr">数组 [1,2,3]</option>
+      <option value="fn">普通函数 function foo(){}</option>
+      <option value="arrow">箭头函数</option>
+      <option value="nullproto">Object.create(null)</option>
+      <option value="dog">class 继承实例（new Dog()）</option>
+    </select>
+    <span class="tag accent">选一个试试</span>
+  </div>
+  <div id="chain-viz" class="chain"></div>
+  <div class="legend">
+    <div class="item"><span class="dot" style="background:var(--accent)"></span> 当前对象</div>
+    <div class="item"><span class="dot" style="background:var(--card)"></span> 原型链上的对象</div>
+    <div class="item"><span class="dot" style="background:transparent;border:1px dashed var(--border)"></span> null（链终点）</div>
+  </div>
+</div>
+
+<h2>关键事实速查（实测）</h2>
+<div class="card">
+  <table class="fact-table">
+    <tr><td><code>p.__proto__ === Person.prototype</code></td><td class="yes">true ✅</td></tr>
+    <tr><td><code>Person.prototype.constructor === Person</code></td><td class="yes">true ✅</td></tr>
+    <tr><td><code>Person.prototype.__proto__ === Object.prototype</code></td><td class="yes">true ✅</td></tr>
+    <tr><td><code>Object.prototype.__proto__</code></td><td class="no">null（链终点）</td></tr>
+    <tr><td><code>箭头函数 .prototype</code></td><td class="no">undefined（不能 new）</td></tr>
+    <tr><td><code>Person.__proto__ === Function.prototype</code></td><td class="yes">true ✅（函数也是对象）</td></tr>
+    <tr><td><code>Function.prototype.__proto__ === Object.prototype</code></td><td class="yes">true ✅</td></tr>
+  </table>
+</div>
+
+<script>
+// ---------- 建立各种对象 ----------
+function Person(name) { this.name = name; }
+Person.prototype.sayHi = function () { return 'Hi, I am ' + this.name; };
+const person = new Person('张三');
+
+const arr = [1, 2, 3];
+function foo() {}
+const arrow = () => {};
+const nullObj = Object.create(null);
+
+class Animal { constructor(name) { this.name = name; } eat() { return this.name + ' eating'; } }
+class Dog extends Animal { constructor(name) { super(name); } bark() { return '汪汪'; } }
+const dog = new Dog('大黄');
+
+const targets = {
+  person: { label: 'Person 实例', obj: person },
+  personProto: { label: 'Person.prototype', obj: Person.prototype },
+  objectProto: { label: 'Object.prototype', obj: Object.prototype },
+  personFn: { label: 'Person 函数', obj: Person },
+  arr: { label: '数组 [1,2,3]', obj: arr },
+  fn: { label: '普通函数 foo', obj: foo },
+  arrow: { label: '箭头函数', obj: arrow },
+  nullproto: { label: 'Object.create(null)', obj: nullObj },
+  dog: { label: 'class 继承实例 Dog', obj: dog },
+};
+
+function describeNode(obj) {
+  if (obj === null) return { name: 'null', role: '原型链终点', props: '' };
+  // 名字
+  let name = obj.constructor && obj.constructor.name !== 'Object' ? obj.constructor.name : 'Object';
+  let role = '';
+  if (obj === Person.prototype) { name = 'Person.prototype'; role = 'Person 的原型对象'; }
+  else if (obj === Object.prototype) { name = 'Object.prototype'; role = 'Object 的原型对象（所有对象链的汇合点）'; }
+  else if (obj === Function.prototype) { name = 'Function.prototype'; role = 'Function 的原型对象'; }
+  else if (obj === Array.prototype) { name = 'Array.prototype'; role = 'Array 的原型对象'; }
+  else if (typeof obj === 'function') { role = '函数（也是对象）'; }
+  else if (Array.isArray(obj)) { role = '数组实例'; }
+  else role = '对象实例';
+  // 自身属性
+  const props = Object.getOwnPropertyNames(obj).slice(0, 4).map(k => k).join(', ');
+  return { name, role, props: props ? props + (Object.getOwnPropertyNames(obj).length > 4 ? '…' : '') : '(无自身属性)' };
+}
+
+function renderChain(obj, selfLabel) {
+  const viz = document.getElementById('chain-viz');
+  viz.innerHTML = '';
+  let cur = obj;
+  let first = true;
+  let step = 0;
+  while (step < 10) {
+    const node = document.createElement('div');
+    if (cur === null) {
+      node.className = 'node null-node';
+      node.innerHTML = '<div class="name">null</div><div class="role">原型链终点</div>';
+    } else {
+      const d = describeNode(cur);
+      node.className = 'node' + (first ? ' self' : '');
+      node.innerHTML =
+        '<div class="name">' + d.name + '</div>' +
+        '<div class="role">' + (first ? '▸ 当前对象 (' + selfLabel + ')' : d.role) + '</div>' +
+        '<div class="props">' + (d.props ? '<b>own:</b> ' + d.props : d.props) + '</div>';
+    }
+    viz.appendChild(node);
+
+    if (cur !== null) {
+      const arrow = document.createElement('div');
+      arrow.className = 'arrow';
+      arrow.innerHTML = '<small>__proto__</small>→';
+      viz.appendChild(arrow);
+      cur = Object.getPrototypeOf(cur);
+    } else break;
+    first = false;
+    step++;
+  }
+}
+
+document.getElementById('target').addEventListener('change', (e) => {
+  const t = targets[e.target.value];
+  renderChain(t.obj, t.label);
+});
+renderChain(person, 'Person 实例');
+</script>
+</body>
+</html>

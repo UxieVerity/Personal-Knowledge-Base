@@ -26,6 +26,7 @@
 [[宏任务（task）]]
 [[微任务（microtask）]]
 [[Update Rendering 阶段详解]]
+[[ResizeObserver-vs-rAF-执行顺序]]
 ### 各阶段核心特征
 
 | 阶段             | 队列/机制          | 执行保证     | 可被跳过 |
@@ -134,7 +135,7 @@ UI 渲染（Update Rendering）**既不是宏任务，也不是微任务**。它
 #### ResizeObserver — 渲染阶段内置步骤
 
 - 规范用语：*run the resize observation steps*
-- 执行位置：Update Rendering 阶段内部（rAF 回调之后、Style 计算之前）
+- 执行位置：Update Rendering 阶段内部（rAF 之后、样式+布局完成后，Step 16 的递送循环内）
 - 🔑 **关键特性**：回调执行后如果导致尺寸再次变化，浏览器会在**同一帧内重新运行 Layout + ResizeObserver**，形成循环
 - 规范限制最大循环次数（Chrome 为 10 次），超出后抛出 `ResizeObserver loop limit exceeded` 错误
 
@@ -224,9 +225,9 @@ io.observe(el);
 | setTimeout / setInterval      | 宏任务    | 事件循环步骤 ①       | 有（延迟后）     |
 | Promise.then / queueMicrotask | 微任务    | 事件循环步骤 ②       | 有（当轮必清空）   |
 | MutationObserver              | 微任务    | 事件循环步骤 ②       | 有          |
-| requestAnimationFrame         | 渲染阶段回调 | 事件循环步骤 ④ (2.1) | 有（每帧）      |
-| ResizeObserver                | 渲染阶段步骤 | 事件循环步骤 ④ (2.2) | 有（尺寸变化时）   |
-| IntersectionObserver 计算       | 渲染阶段步骤 | 事件循环步骤 ④ (2.7) | 有          |
+| requestAnimationFrame         | 渲染阶段回调 | 事件循环步骤 ④ (Step 14) | 有（每帧）      |
+| ResizeObserver                | 渲染阶段步骤 | 事件循环步骤 ④ (Step 16，rAF 之后) | 有（尺寸变化时）   |
+| IntersectionObserver 计算       | 渲染阶段步骤 | 事件循环步骤 ④ (Step 19) | 有          |
 | IntersectionObserver 回调       | 宏任务    | 后续事件循环步骤 ①     | 有（异步延迟）    |
 | requestIdleCallback           | 空闲回调   | 事件循环步骤 ⑤       | **无**      |
 | UI 渲染本身                       | 独立阶段   | 事件循环步骤 ④       | **无**（可跳过） |

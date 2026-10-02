@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>WebGL 滤镜 vs Canvas 2D · 画布合成实测</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --border: #2a2f3a;
+    --fg: #e6e9ef; --muted: #9aa3b2; --accent: #5b9dff;
+    --ok: #3ecf8e; --bad: #ff5f5f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.7 "Segoe UI", system-ui, sans-serif; padding: 32px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-bottom: 24px; }
+  h2 { font-size: 15px; margin: 28px 0 12px; color: var(--accent); border-left: 3px solid var(--accent); padding-left: 8px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+  .tag.accent { background: rgba(91,157,255,.15); color: var(--accent); }
+  .tag.ok { background: rgba(62,207,142,.15); color: var(--ok); }
+  .tag.bad { background: rgba(255,95,95,.15); color: var(--bad); }
+  code { background: #0d0f14; border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  button { background: var(--accent); color: #fff; border: 0; padding: 7px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { opacity: .9; }
+  button.active { background: var(--ok); }
+  select { background: #0d0f14; border: 1px solid var(--border); color: var(--fg); padding: 6px 10px; border-radius: 6px; }
+  canvas { background: #0d0f14; border: 1px solid var(--border); border-radius: 8px; max-width: 100%; }
+  .canvas-wrap { display: flex; gap: 16px; flex-wrap: wrap; }
+  .canvas-box { text-align: center; }
+  .canvas-box .label { font-size: 12px; color: var(--muted); margin: 6px 0 2px; }
+  .perf-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  .perf-table th, .perf-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+  .perf-table th { color: var(--muted); font-weight: 600; }
+  .perf-table .best { color: var(--ok); font-weight: 700; }
+  .perf-table .worst { color: var(--bad); }
+</style>
+</head>
+<body>
+<h1>WebGL 滤镜 vs Canvas 2D · 画布合成实测</h1>
+<div class="sub">同一张图、同一种滤镜（灰度/反转/亮度），对比 <code>Canvas 2D getImageData 逐像素</code> 与 <code>WebGL 着色器</code> 的实现与性能</div>
+
+<h2>滤镜选择</h2>
+<div class="card">
+  <div class="row">
+    <button data-filter="grayscale" class="active">灰度</button>
+    <button data-filter="invert">反转</button>
+    <button data-filter="brightness">亮度+50%</button>
+    <button data-filter="none">原图</button>
+    <span class="tag accent">切换滤镜，看两种实现效果 + 耗时</span>
+  </div>
+</div>
+
+<h2>两种实现对比</h2>
+<div class="card">
+  <div class="canvas-wrap">
+    <div class="canvas-box">
+      <canvas id="c2d" width="480" height="320"></canvas>
+      <div class="label">Canvas 2D（getImageData 逐像素）</div>
+    </div>
+    <div class="canvas-box">
+      <canvas id="cgl" width="480" height="320"></canvas>
+      <div class="label">WebGL（片段着色器，GPU 并行）</div>
+    </div>
+  </div>
+</div>
+
+<h2>实测性能（10 帧平均耗时）</h2>
+<div class="card">
+  <table class="perf-table">
+    <thead><tr><th>滤镜</th><th>Canvas 2D 耗时</th><th>WebGL 耗时</th><th>加速比</th></tr></thead>
+    <tbody id="perf-body">
+      <tr><td>（切换滤镜后显示）</td><td>—</td><td>—</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <div class="sub" style="margin-top:8px">* 图片越大、像素越多，WebGL 相对 Canvas 2D 的优势越明显（GPU 并行 vs CPU 串行）</div>
+</div>
+
+<script>
+const SIZE = 480 * 320;
+let img = null;
+let currentFilter = 'grayscale';
+
+// ---------- 生成测试图（渐变 + 色块，方便看滤镜效果） ----------
+function makeTestImage() {
+  const c = document.createElement('canvas');
+  c.width = 480; c.height = 320;
+  const ctx = c.getContext('2d');
+  // 水平渐变
+  const g = ctx.createLinearGradient(0, 0, 480, 320);
+  g.addColorStop(0, '#ff6b6b'); g.addColorStop(0.5, '#4ecdc4'); g.addColorStop(1, '#5b9dff');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 480, 320);
+  // 色块 + 文字
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 40px sans-serif';
+  ctx.fillText('R', 30, 90); ctx.fillText('G', 210, 200); ctx.fillText('B', 380, 110);
+  return c;
+}
+
+// ---------- Canvas 2D：getImageData 逐像素处理 ----------
+function applyFilter2D(filter) {
+  const canvas = document.getElementById('c2d');
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imageData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i+1], b = d[i+2];
+    if (filter === 'grayscale') {
+      const gray = 0.299*r + 0.587*g + 0.114*b;   // 亮度公式
+      d[i] = d[i+1] = d[i+2] = gray;
+    } else if (filter === 'invert') {
+      d[i] = 255-r; d[i+1] = 255-g; d[i+2] = 255-b;
+    } else if (filter === 'brightness') {
+      d[i] = Math.min(255, r*1.5); d[i+1] = Math.min(255, g*1.5); d[i+2] = Math.min(255, b*1.5);
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// ---------- WebGL：片段着色器（GPU 并行处理每个像素） ----------
+let gl = null, program = null, texture = null;
+
+function initWebGL() {
+  const canvas = document.getElementById('cgl');
+  gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if (!gl) { alert('浏览器不支持 WebGL'); return; }
+
+  // 顶点着色器：全屏三角形
+  const vs = `
+    attribute vec2 a_pos;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_pos * 0.5 + 0.5;
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+    }`;
+  // 片段着色器：接收纹理 + uniform 滤镜类型，GPU 对每个像素并行执行
+  const fs = `
+    precision mediump float;
+    varying vec2 v_uv;
+    uniform sampler2D u_tex;
+    uniform int u_filter;
+    void main() {
+      vec4 c = texture2D(u_tex, v_uv);
+      if (u_filter == 1) {            // 灰度
+        float gray = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+        gl_FragColor = vec4(vec3(gray), 1.0);
+      } else if (u_filter == 2) {     // 反转
+        gl_FragColor = vec4(1.0 - c.rgb, 1.0);
+      } else if (u_filter == 3) {     // 亮度
+        gl_FragColor = vec4(c.rgb * 1.5, 1.0);
+      } else {                        // 原图
+        gl_FragColor = c;
+      }
+    }`;
+
+  function compile(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    return sh;
+  }
+  program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  gl.useProgram(program);
+
+  // 全屏三角形顶点
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(program, 'a_pos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  // 纹理
+  texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+}
+
+function applyFilterWebGL(filter) {
+  const canvas = document.getElementById('cgl');
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+  const loc = gl.getUniformLocation(program, 'u_filter');
+  gl.uniform1i(loc, filter === 'grayscale' ? 1 : filter === 'invert' ? 2 : filter === 'brightness' ? 3 : 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);   // GPU 并行处理
+}
+
+// ---------- 性能测量 ----------
+function bench(fn, frames = 10) {
+  // 预热
+  fn(); fn();
+  const t0 = performance.now();
+  for (let i = 0; i < frames; i++) fn();
+  return (performance.now() - t0) / frames;
+}
+
+function render() {
+  const t2d = bench(() => applyFilter2D(currentFilter));
+  const tgl = bench(() => applyFilterWebGL(currentFilter));
+  updatePerfTable(t2d, tgl);
+}
+
+function updatePerfTable(t2d, tgl) {
+  const ratio = (t2d / tgl).toFixed(1);
+  const names = { grayscale: '灰度', invert: '反转', brightness: '亮度+50%', none: '原图' };
+  document.getElementById('perf-body').innerHTML = `
+    <tr>
+      <td><b>${names[currentFilter]}</b></td>
+      <td class="${t2d > tgl * 1.5 ? 'worst' : ''}">${t2d.toFixed(2)} ms</td>
+      <td class="best">${tgl.toFixed(2)} ms</td>
+      <td><b>${ratio}×</b> ${ratio >= 2 ? '🚀 GPU 并行优势明显' : ratio >= 1.3 ? '✅ WebGL 更快' : '≈ 持平'}</td>
+    </tr>`;
+}
+
+// ---------- 初始化 ----------
+img = makeTestImage();
+document.getElementById('c2d').getContext('2d').drawImage(img, 0, 0);
+initWebGL();
+render();
+
+document.querySelectorAll('button[data-filter]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('button[data-filter]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    render();
+  });
+});
+</script>
+</body>
+</html>
