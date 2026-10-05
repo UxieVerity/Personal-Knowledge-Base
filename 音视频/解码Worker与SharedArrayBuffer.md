@@ -145,6 +145,6 @@ ffmpeg wasm `-pthread` 构建：WASM 内部再开 N 个解码线程（Worker 子
 - [[WASM软解H265管线]] —— 本篇是管线线程模型的展开
 - [[WASM内存管理]] —— 帧池与线性内存（同源的固定内存思想）
 - [[YUV格式与WebGL渲染]] —— 帧递回主线程后的渲染终点
-- [[../浏览器原理/浏览器事件循环(EventLoop)]] —— Worker 与主线程事件循环的隔离模型
+- [[浏览器事件循环(EventLoop)]] —— Worker 与主线程事件循环的隔离模型
 
 *本文档基于 Node 26 worker_threads 实测、W3C Workers/SAB 规范、Emscripten pthread 构建实践整理。*
