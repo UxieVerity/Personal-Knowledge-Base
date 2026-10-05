@@ -107,7 +107,7 @@ const v = document.querySelector('video');   // src 指向 .mp4 (H265)
 
 ## 7. 面试速记
 
-> **30 秒版**："video 标签是整文件喂的黑盒，浏览器包办拉流/demux/解码/渲染，前端只有控制和事件。canPlayType 三态 probably/maybe/空串，本质是静态白名单比对不做真解码——所以只能初筛。实测本机 Chrome 154：H265 canPlayType=probably 但 MSE isTypeSupported=false，video 标签实播又成功——同一浏览器三层结论都能不一致，能力检测必须分通道。FLV/WebCodecs/自定义 buffer 这些原生做不到的场景就是 MSE/自研 SDK 的存在理由。"
+> **30 秒版**："video 标签是整文件喂的黑盒，浏览器包办拉流/demux/解码/渲染，前端只有控制和事件。canPlayType 三态 probably/maybe/空串，本质是静态白名单比对不做真解码——所以只能初筛。实测本机 Chrome 154：H265 在正常启动（GPU 可用）时 canPlayType/MSE/实播三层全绿，但 --disable-gpu 环境下 MSE 与 canPlayType 双双关闭——结论随启动环境漂移，能力检测必须在真实运行环境分通道做。FLV/WebCodecs/自定义 buffer 这些原生做不到的场景就是 MSE/自研 SDK 的存在理由。"
 
 ## 相关笔记
 
