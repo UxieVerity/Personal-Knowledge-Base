@@ -2,7 +2,7 @@
 
 > **结论：then 链式的三个机制——返回值传递（普通值直接给下一个 then）、Promise 展平（返回 Promise 则等待其 resolve）、错误跳过（reject 跳过所有 onFulfilled 直到 catch）。** `Promise.all` = 全部成功才 resolve（**保序**）、任一失败整体 reject（短路）；`Promise.race` = **第一个 settle 的赢**（resolve 或 reject 谁先谁算）。手写 all 用「索引存值 + 计数」保序，race 用「每个 p.then(resolve, reject)」先到先得。实测 10 项全过。
 >
-> 可运行验证：[[Promise链式-all-race-验证脚本.js]]（Node 实测：链式/展平/错误跳过/all/race/手写对比）
+> 可运行验证：[[Promise链式-all-race-验证脚本.js]]（Node 实测：链式/展平/错误跳过/all/race/手写对比） · [[Promise.all-为什么resolve包装-验证.js]]（为什么 `Promise.resolve(p)` 不能省）
 
 ---
 
@@ -67,6 +67,24 @@ function myAll(ps) {
 
 **为什么用 `results[i] = v` 而不是 `push`**：push 按完成顺序，快的先入队 → 结果乱序。**预分配数组 + 索引写入**保证结果顺序 = 传入顺序（Promise.all 的契约）。
 
+**为什么要 `Promise.resolve(p)` 包一层，直接 `p.then` 不行吗（实测追问）**：
+
+`Promise.resolve` 是**归一化（normalization）**——保证不管数组元素是什么，循环体里拿到的都是真 Promise。直接 `p.then` 只对真 Promise 成立，但 `Promise.all` 的契约允许数组里混任意值：
+
+| 入参 | 直接 `p.then` | `Promise.resolve(p).then` |
+| ---- | ---- | ---- |
+| 普通值 `1` | ❌ `TypeError: p.then is not a function` | ✅ 包成 `Promise<1>` |
+| 真 Promise | ✅ | ✅ 且 `Promise.resolve(p) === p` 原样返回，**零开销** |
+| 不规范 thenable | ⚠️ 无守卫，resolve 调两次回调触发两次 | ✅ 规范展开，只采纳第一次 |
+
+```
+[实测] allBad([1])  → TypeError: p.then is not a function   ← 直接 p.then 崩
+[实测] allGood([1, Promise]) = [1,2]                        ← resolve 包装后混合数组正常
+[实测] badThenable（resolve 调两次）：直接 then 回调触发 2 次；Promise.resolve 包装只触发 1 次
+```
+
+**为什么这么设计**：`Promise.all([1, fetchX(), 2])` 是合法调用——规范规定非 Promise 元素按「已 resolved」处理。归一化让循环体只有一条路径；顺带白拿 thenable 的 once 守卫（脏 thenable 的二次 resolve/reject 不会把计数器 `done` 搞乱）。**对真 Promise 是恒等操作**，所以防御没有性能代价——这也是它成为惯用写法的原因。race 同理。
+
 ## 4. Promise.race（实测）
 
 ```js
@@ -109,6 +127,7 @@ function myRace(ps) {
 | 展平是什么？ | 返回 Promise 时等待 resolve，拿到内部值而非 Promise 对象 |
 | 错误怎么在链里走？ | reject 跳过所有 onFulfilled，直达最近 onRejected/catch |
 | all 怎么保序？ | 预分配数组 + 索引写入（push 会乱序） |
+| all 里为什么 `Promise.resolve(p)` 包一层？ | 归一化：普通值直接 `p.then` 报 TypeError；真 Promise 原样返回零开销；thenable 白拿 once 守卫 |
 | all 任一失败？ | 整体 reject，短路不等其他 |
 | race 是什么？ | 第一个 settle 的赢（resolve/reject 谁先谁算） |
 | allSettled 区别？ | 不短路，全部完成返回 status 数组 |
@@ -116,6 +135,6 @@ function myRace(ps) {
 
 ## 7. 面试速记（30 秒版）
 
-> **链式三机制：返回值传递、Promise 展平（返回 Promise 等 resolve）、错误跳过（reject 直达 catch）。** `Promise.all`：全成功 → **保序数组**（预分配索引写，不是 push），任一失败 → 整体 reject 短路。`Promise.race`：**第一个 settle 赢**（成败都算），`then(resolve, reject)` 一行实现。**经典实战**：race 做超时（`race([fetch, sleep 抛错])`）。
+> **链式三机制：返回值传递、Promise 展平（返回 Promise 等 resolve）、错误跳过（reject 直达 catch）。** `Promise.all`：全成功 → **保序数组**（预分配索引写，不是 push），任一失败 → 整体 reject 短路；`Promise.resolve(p)` 归一化不能省——普通值直接 `p.then` 会 TypeError，真 Promise 原样返回零开销。`Promise.race`：**第一个 settle 赢**（成败都算），`then(resolve, reject)` 一行实现。**经典实战**：race 做超时（`race([fetch, sleep 抛错])`）。
 
 > 关联笔记：[[手写题/Promise基础版]]（状态机/链式基础） · [[浏览器事件循环(EventLoop)]]（微任务） · [[手写题/串行并发控制]] · [[手写题/Promise 并发池]] · [[面试复习准备计划]]（W3 手写题 #14/15/16）

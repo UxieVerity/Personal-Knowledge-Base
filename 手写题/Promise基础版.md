@@ -52,6 +52,13 @@ MyPromise.prototype.then = function (onFulfilled, onRejected) {
 MyPromise.prototype.catch = function (onRejected) {
   return this.then(null, onRejected);          // ⑧ catch = 只处理失败的 then
 };
+
+MyPromise.prototype.finally = function (cb) {
+  return this.then(                            // ⑨ finally：无论成败都执行 cb
+    (v) => { cb(); return v; },                //   cb 不收参数，值/原因原样穿透
+    (e) => { cb(); throw e; }                  //   基础版不处理 cb 返回 Promise 需等待的情况
+  );
+};
 ```
 
 ## 2. 核心机制逐条讲（实测）
@@ -99,10 +106,10 @@ queueMicrotask(() => { ... });   // 模拟原生 Promise 的微任务
 | ---- | ---- |
 | resolve 一个 Promise | 原生会**展平**（吸收外部 Promise 状态）；手写基础版没处理 |
 | Promise.resolve/race/all 静态方法 | 基础版只有 then，没有静态方法 |
-| catch/finally | 原生是 `then(null, onRej)` 的语法糖 + finally。基础版已补 catch（实测 G） |
+| catch/finally | catch = `then(null, onRej)` 语法糖，finally = then 两个分支都插 cb 后原样穿透（实测 G/H 已补）。注意 finally 的 cb **不收参数**、返回 Promise 时完整版要等它 |
 | 微任务 | 用 `queueMicrotask` 模拟，原生用内部微任务队列（行为一致） |
 
-> 面试话术：「基础版验证了状态机/链式/穿透三个核心；完整的还要处理 resolve 展平（Promise 吸收）、静态方法（all/race）、catch/finally。基础版够讲清原理，追问再展开。」
+> 面试话术：「基础版验证了状态机/链式/穿透三个核心，catch/finally 也已补上（都是 then 的语法糖）；完整的还要处理 resolve 展平（Promise 吸收）、静态方法（all/race）。基础版够讲清原理，追问再展开。」
 
 ## 4. 高频追问速答
 
@@ -115,10 +122,11 @@ queueMicrotask(() => { ... });   // 模拟原生 Promise 的微任务
 | 值穿透是什么？ | 没传回调时把当前值/原因原样传下去，不是 undefined |
 | 回调抛错怎么办？ | 下一个 then 的 onRejected 收到（try/catch 捕获 → reject） |
 | catch 怎么实现？ | `then(null, onRejected)` 的语法糖——跳过成功回调、只接失败（实测 G） |
-| 和原生差距？ | resolve 展平、静态方法（all/race）、catch/finally（catch 基础版已补） |
+| finally 和 then 的区别？ | 成败都执行 cb、**cb 不收参数**、值/原因原样穿透；cb 返回 Promise 时完整版要等它（实测 H） |
+| 和原生差距？ | resolve 展平、静态方法（all/race）（catch/finally 基础版已补） |
 
 ## 5. 面试速记（30 秒版）
 
-> **手写 Promise 核心三件套：状态机（`_settle` 幂等，非 pending 忽略 → 不可逆）、微任务调度（`queueMicrotask`，then 回调异步且先于宏任务）、链式（then 返回新 Promise，返回值传给下一个，抛错进 onRejected，没传回调就值穿透）。** executor 同步执行 + try/catch 捕获同步抛错。**catch = `then(null, onRejected)` 语法糖**。**面试追问**：和原生差距 = resolve 展平（Promise 吸收）、静态方法 all/race、finally。
+> **手写 Promise 核心三件套：状态机（`_settle` 幂等，非 pending 忽略 → 不可逆）、微任务调度（`queueMicrotask`，then 回调异步且先于宏任务）、链式（then 返回新 Promise，返回值传给下一个，抛错进 onRejected，没传回调就值穿透）。** executor 同步执行 + try/catch 捕获同步抛错。**catch = `then(null, onRejected)` 语法糖；finally = then 两个分支都插 cb、值/原因原样穿透（cb 不收参数）**。**面试追问**：和原生差距 = resolve 展平（Promise 吸收）、静态方法 all/race。
 
 > 关联笔记：[[浏览器事件循环(EventLoop)]]（微任务队列） · [[微任务（microtask）]]（then 回调为何是微任务） · [[手写题/Promise.then 链式]] · [[手写题/Promise.all]] · [[面试复习准备计划]]（W3 手写题 #13）
