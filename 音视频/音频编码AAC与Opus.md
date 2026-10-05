@@ -86,6 +86,66 @@ Opus 96k: frame duration = 960 samples  (20ms  @48k)      （首帧 648 为预�
 | WebM | ❌ | ✅ 标配 |
 | WebRTC (SDP) | ⚠️ 可协商但非主流 | ✅ **强制必选**（RFC 7874：所有 WebRTC 端点必须支持 Opus） |
 
+### 3.3 二进制结构：AAC 的 ADTS 头 vs Opus 的 TOC 字节
+
+两者「裸流帧」的头结构对比最能说明设计哲学差异：**AAC 每帧 7~9 字节固定头，Opus 每包最少 1 字节头**。
+
+#### AAC 裸流 = ADTS（Audio Data Transport Stream）
+
+流式场景（TS/裸流解析）里每帧前有 ADTS 头，固定 7 字节（带 CRC 为 9）：
+
+```
+AAAAAAAA AAAABCCD EEFFFFGH HHIJKLMM MMMMMMMM MMMOOOOO OOOOOOPP
+│          │         │          │              │           │
+syncword   ID/layer/  profile/   channel_cfg/   frame_len   fullness/blocks
+0xFFF      protect    sr_idx
+```
+
+| 字段 | 位 | 实测值（本机 ffmpeg 生成 48k 单声道 LC） | 含义 |
+| --- | --- | --- | --- |
+| syncword | 12 | `0xFFF` | 帧同步字，解析器靠它定位帧头 |
+| ID | 1 | 0 | 0=MPEG-4 / 1=MPEG-2 |
+| layer | 2 | 0 | 恒 0 |
+| protection_absent | 1 | 1 | 1=无 CRC（头 7B）/ 0=有 CRC（头 9B） |
+| profile | 2 | 1 | **AOT−1**：0=Main 1=**LC** 2=SSR 3=LTP |
+| sampling_freq_idx | 4 | 3 | 查表：3=48000Hz（15 禁用） |
+| channel_config | 3 | 1 | 1=单声道 2=立体声…7=8 声道 |
+| aac_frame_length | 13 | 379 | **含头**的整帧长度（解析器据此跳帧） |
+| buffer_fullness | 11 | 0x7FF | 0x7FF = VBR 标志 |
+| number_of_blocks −1 | 2 | 0 | 每帧 raw block 数−1（通常 0） |
+
+**MP4 里没有 ADTS**——参数集（AOT/采样率/声道 = AudioSpecificConfiguration，2 字节）提取到 esds/decSpecificInfo 带外存放，帧只留 raw data。**ADTS ↔ raw 的互转就是 MSE 喂流前的常见预处理**（Chrome MSE 的 AAC 要求 mp4a.40.2 封装，裸 ADTS 流要手动剥头/装 esds——flv.js 里就有这段）。
+
+#### Opus 包 = TOC 字节 + 自描述分帧
+
+Opus 没有「头」的概念——**每个包第一个字节就是 TOC（Table of Contents），自描述一切**：
+
+```
+ 0 1 2 3 4 5 6 7
++-+-+-+-+-+-+-+-+
+| config  |s| c |     ← TOC 字节：5 位 config + 1 位 stereo + 2 位帧数代码
++-+-+-+-+-+-+-+-+
+```
+
+| 字段 | 位 | 含义 |
+| --- | --- | --- |
+| config | 5 | 32 种组合 = **模式（SILK/CELT/混合）× 带宽 × 帧长**（如 config 0 = SILK NB 10ms，config 15 = CELT WB 20ms） |
+| s | 1 | 0=单声道 1=立体声 |
+| c | 2 | 帧数代码：0=1 帧 / 1=2 帧等长 / 2=2 帧变长 / 3=任意帧数（带 frame count 字节） |
+
+后面跟压缩数据；code 2/3（变长多帧）用 1~2 字节长度前缀自描述分帧（252~255 是扩展转义，表示长度需要第二字节）。**码率切换（6k→510k）、帧长切换（2.5→60ms）、单双声道切换都不需要重新协商——TOC 字节每包自描述**，这就是 Opus「网络实时自适应」的协议基础。对照 AAC：改采样率/声道要换 SPS 级别的参数集，流中途切换 = 解码器重初始化。
+
+#### 结构差异的本质
+
+| | AAC (ADTS) | Opus (TOC) |
+| --- | --- | --- |
+| 帧头开销 | 7~9 B/帧（1024 采样 ≈ 23ms） | 1~2 B/包（20ms 默认） |
+| 参数集 | 带外（ASC in esds）或 ADTS 内重复 | **无**——TOC 逐包自描述 |
+| 中途变参 | 需重初始化 | TOC 换 config 即可 |
+| 解析模型 | 同步字定位 + 固定字段 | 单字节自描述 + 自定义变长分帧 |
+
+**一句话**：AAC 的结构是「广播思维」——参数集一次声明、帧头携带冗余同步信息保证流内可恢复；Opus 的结构是「包思维」——每包独立自描述，丢一包不影响后续解析。这个差异直接决定了各自的主场（分发光播 vs 实时通话）。
+
 ## 4. 为什么这么设计？（背后取舍）
 
 **为什么 WebRTC 强制 Opus 而不是 AAC？**
@@ -115,6 +175,7 @@ Opus 96k: frame duration = 960 samples  (20ms  @48k)      （首帧 648 为预�
 ## 相关笔记
 
 - [[编码与封装的区别]] —— 音频编码装进容器的两层模型
+- [[fMP4与MP4的区别]] —— AAC 参数集（ASC）在 esds 里的位置与 MSE mimeType 报错实测
 - [[WebRTC适用边界]] —— 为什么实时场景强制 Opus（生态视角）
 - [[WebAudio与音画同步时钟]] —— 解码后的音频怎么对时钟播放
 - [[RTCPeerConnection流程]] —— SDP 协商里 Opus 的位置
