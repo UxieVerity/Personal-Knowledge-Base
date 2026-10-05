@@ -2,13 +2,15 @@
  * 手写 Promise 基础版验证脚本（Node 真实输出）
  * 运行：node Promise基础版-验证脚本.js
  *
- * 验证 6 件事：
+ * 验证 7 件事：
  *  [A] 状态机：pending → fulfilled/rejected，状态不可逆（一旦改变不再变）
  *  [B] then 微任务时序：then 回调异步执行（微任务，先于宏任务 setTimeout）
  *  [C] 链式调用：then 返回新 Promise（支持 .then().then()）
  *  [D] 值穿透：then 回调返回值会被下一个 then 收到（值传递）
  *  [E] resolve 后 then：状态已 settled 再 then → 立即（微任务）执行
  *  [F] 错误处理：reject 进入 then 的 onRejected（或不传 onRejected 时透传）
+ *  [G] catch：= then(null, onRejected) 的语法糖，捕获链中任意一步的失败
+ *  [H] finally：无论成败都执行回调（不收参数），值/原因原样穿透
  */
 'use strict';
 
@@ -68,6 +70,20 @@ MyPromise.prototype.then = function (onFulfilled, onRejected) {
     this._run(handler);                          // 已定 → 直接调度
   }
   return next;
+};
+
+// catch = then(null, onRejected) 的语法糖：不传成功回调 → 成功值穿透，只接失败
+MyPromise.prototype.catch = function (onRejected) {
+  return this.then(null, onRejected);
+};
+
+// finally = 无论成败都执行 cb（不收参数），值/原因原样穿透
+// 基础版不处理「cb 返回 Promise 要等它」——完整版需 cb() 结果是 thenable 时暂停传递
+MyPromise.prototype.finally = function (cb) {
+  return this.then(
+    (v) => { cb(); return v; },        // 成功：执行 cb，值继续传
+    (e) => { cb(); throw e; }          // 失败：执行 cb，原因继续抛
+  );
 };
 
 const log = (...a) => console.log(...a);
@@ -136,3 +152,51 @@ setTimeout(() => {
   log('F1 reject 进 onRejected =', JSON.stringify(fRes), '（期望 ["捕获:出错了"]）');
   ok('F1 reject 处理', fRes[0] === '捕获:出错了');
 }, 10);
+
+/* ---------- G. catch ---------- */
+log('\n=== G. catch = then(null, onRejected) 语法糖 ===');
+// G1: reject 直接被 .catch 接住
+new MyPromise((res, rej) => rej('出错了'))
+  .catch(e => {
+    log('G1 catch 接住 reject =', `catch:${e}`, '（期望 catch:出错了）');
+    ok('G1 catch 接住 reject', e === '出错了');
+  });
+// G2: 链中间 then 回调抛错 → 被后面的 .catch 接住（任意一步失败都能捕）
+new MyPromise(res => res(1))
+  .then(() => { throw new Error('链中抛错'); })
+  .then(() => log('G2 ❌ 不该走到成功回调'))
+  .catch(e => {
+    log('G2 catch 接住链中抛错 =', `catch中间:${e.message}`, '（期望 catch中间:链中抛错）');
+    ok('G2 catch 接住链中抛错', e.message === '链中抛错');
+  });
+// G3: 成功路径不进 catch，值穿透继续走
+new MyPromise(res => res('成功值'))
+  .then(v => v)
+  .catch(() => log('G3 ❌ 成功路径不该进 catch'))
+  .then(v => {
+    log('G3 成功路径不进 catch =', v, '（期望 成功值）');
+    ok('G3 成功路径不进 catch', v === '成功值');
+  });
+
+/* ---------- H. finally ---------- */
+log('\n=== H. finally = 无论成败都执行回调，值/原因原样穿透 ===');
+// H1: 成功路径 → finally 被调用且不收参数，值继续传给下一个 then
+new MyPromise(res => res('成功值'))
+  .finally((...args) => {
+    log('H1 finally 被调用，参数 =', JSON.stringify(args), '（期望 []：不收结果）');
+    ok('H1a finally 不收参数', args.length === 0);
+  })
+  .then(v => {
+    log('H1 值穿透过 finally =', v, '（期望 成功值）');
+    ok('H1b 值穿透', v === '成功值');
+  });
+// H2: 失败路径 → finally 也被调用，原因继续传给 catch
+new MyPromise((res, rej) => rej('出错了'))
+  .finally(() => {
+    log('H2 失败路径 finally 也被调用');
+    ok('H2a 失败路径调用 finally', true);
+  })
+  .catch(e => {
+    log('H2 原因穿透过 finally =', e, '（期望 出错了）');
+    ok('H2b 原因穿透', e === '出错了');
+  });

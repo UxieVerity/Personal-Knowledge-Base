@@ -8,3 +8,5 @@ node_modules/
 # Obsidian 工作区缓存（不含笔记内容，避免频繁 diff）
 .obsidian/workspace.json
 .obsidian/graph.json
+音视频/media/
+音视频/measure-result.json

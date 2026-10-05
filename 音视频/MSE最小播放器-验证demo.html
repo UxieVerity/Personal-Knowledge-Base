@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MSE 最小播放器 · 验证 demo</title>
+<style>
+:root {
+  --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --muted:#8b93a7;
+  --text:#e8ecf4; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --acc:#60a5fa;
+}
+html,body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family: system-ui, sans-serif; }
+.wrap { padding:16px; }
+h1 { font-size:20px; margin:0 0 4px; }
+.sub { color:var(--muted); font-size:13px; margin-bottom:12px; }
+.controls { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+button, select {
+  background:var(--panel); color:var(--text); border:1px solid var(--line);
+  padding:6px 12px; border-radius:6px; cursor:pointer; font-size:13px;
+}
+button:hover { border-color:var(--acc); }
+button:disabled { opacity:.4; cursor:not-allowed; }
+.stage { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;}
+video { width:320px; max-width:100%; background:#000; border-radius:4px; display:block; }
+.infos { flex:1; min-width:220px; font-size:13px; line-height:1.7; }
+.infos b { color:var(--acc); }
+.stats { display:flex; gap:16px; margin:8px 0 12px; font-size:13px; }
+.stats .s { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
+.stats .s b { font-size:16px; color:var(--acc); }
+#log {
+  font-family: ui-monospace, Consolas, monospace; font-size:12px;
+  background:var(--panel); border:1px solid var(--line); border-radius:8px;
+  padding:10px; height:220px; overflow-y:auto; line-height:1.6;
+}
+.logline { padding:1px 0; white-space:pre-wrap; word-break:break-all; }
+.ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); } .dim { color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MSE 最小播放器 · 验证 demo</h1>
+  <div class="sub">fetch 拉流 → （可选 demux）→ appendBuffer → 播放。同目录 MSE核心机制.md 笔记的实测证据。</div>
+
+  <div class="controls">
+    <select id="srcSel">
+      <option value="mp4">MP4 整文件（fMP4·视频轨）</option>
+      <option value="mp4full">MP4 整文件（fMP4·视频+音频）</option>
+      <option value="chunked">fMP4 分段喂（2 段）</option>
+    </select>
+    <button id="btnRun">▶ 运行</button>
+    <button id="btnClear">清空日志</button>
+  </div>
+
+  <div class="stats">
+    <div class="s">阶段 <b id="stStage">—</b></div>
+    <div class="s">buffered <b id="stBuf">—</b></div>
+    <div class="s">currentTime <b id="stTime">—</b></div>
+    <div class="s">dropped <b id="stDrop">—</b></div>
+  </div>
+
+  <div class="stage">
+    <video id="v" muted playsinline controls></video>
+    <div class="infos" id="infos">选择源并运行。</div>
+  </div>
+
+  <div id="log"></div>
+</div>
+
+<script>
+/* ============ 配置：本地 Node 服务器会注入这些文件 ============
+ * /media/h264-video.mp4   fMP4 视频轨（avc1）
+ * /media/h264-full.mp4    fMP4 视频轨+音频轨（avc1 + mp4a.40.2）
+ * 运行方式：node mse-player-server.js → 打开 http://localhost:8932/mse-player-demo.html
+ */
+const CFG = {
+  mp4:     { url:'/media/h264-video.mp4', mime:'video/mp4; codecs="avc1.42E01E"', chunks:1 },
+  mp4full: { url:'/media/h264-full.mp4',  mime:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"', chunks:1 },
+  chunked: { url:'/media/h264-video.mp4', mime:'video/mp4; codecs="avc1.42E01E"', chunks:3 },
+};
+let MSB = null; // 最近一次 SourceBuffer 引用（供外部 probe 读 buffered）
+
+function log(msg, cls='') {
+  const el = document.getElementById('log');
+  const line = document.createElement('div');
+  line.className = 'logline ' + cls;
+  line.textContent = `[${new Date().toISOString().slice(11,23)}] ${msg}`;
+  el.appendChild(line); el.scrollTop = el.scrollHeight;
+}
+function setStage(s){ document.getElementById('stStage').textContent = s; }
+function fmtTR(tr){
+  if (!tr || tr.length===0) return '(空)';
+  let parts=[]; for(let i=0;i<tr.length;i++) parts.push(`[${tr.start(i).toFixed(2)}, ${tr.end(i).toFixed(2)}]`);
+  return parts.join(' ');
+}
+function tick(){
+  const v=document.getElementById('v');
+  document.getElementById('stBuf').textContent = MSB ? fmtTR(MSB.buffered) : '—';
+  document.getElementById('stTime').textContent = v.currentTime.toFixed(2)+'s';
+  const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
+  document.getElementById('stDrop').textContent = q ? q.droppedVideoFrames : '—';
+  requestAnimationFrame(tick);
+}
+tick();
+
+/* 核心：MSE 播放器最小实现 */
+async function runPlayer(){
+  const cfg = CFG[document.getElementById('srcSel').value];
+  const v = document.getElementById('v');
+  v.pause(); v.removeAttribute('src'); MSB = null;
+
+  log(`1. 能力检测 MediaSource.isTypeSupported("${cfg.mime}")`);
+  setStage('能力检测');
+  if (!window.MediaSource) { log('  无 MediaSource，停止', 'bad'); return; }
+  const supported = MediaSource.isTypeSupported(cfg.mime);
+  log(`  → ${supported}`, supported ? 'ok' : 'bad');
+  if (!supported) { log('  mime 不支持，停止', 'bad'); window.__mseResult={ok:false, reason:'unsupported'}; return; }
+
+  log('2. 创建 MediaSource，挂到 video.src（URL.createObjectURL）');
+  setStage('建 MS');
+  const ms = new MediaSource();
+  v.src = URL.createObjectURL(ms);
+  await once(v, 'error', ms, 'sourceopen');
+  if (v.error) { log(`  video.error: ${v.error.message}`, 'bad'); return; }
+  log('  → sourceopen', 'ok');
+
+  log(`3. addSourceBuffer("${cfg.mime}")`);
+  setStage('建 SB');
+  let sb;
+  try { sb = ms.addSourceBuffer(cfg.mime); }
+  catch(e){ log(`  addSourceBuffer 抛错: ${e.message}`, 'bad'); return; }
+  MSB = sb;
+  log('  → SourceBuffer 创建', 'ok');
+
+  log(`4. fetch ${cfg.url} 拉流`);
+  setStage('拉流');
+  const res = await fetch(cfg.url);
+  if (!res.ok) { log(`  HTTP ${res.status}`, 'bad'); return; }
+  const total = await res.arrayBuffer();
+  log(`  → ${total.byteLength} 字节`, 'ok');
+
+  log('5. appendBuffer 分段喂（每段等 updateend）');
+  setStage('appendBuffer');
+  const chunkSize = Math.ceil(total.byteLength / cfg.chunks);
+  const t0 = performance.now();
+  for (let i=0; i<cfg.chunks; i++){
+    const start=i*chunkSize, end=Math.min(total.byteLength,(i+1)*chunkSize);
+    const buf = total.slice(start,end);
+    log(`  段 ${i+1}/${cfg.chunks}: bytes [${start},${end}) appendBuffer()`);
+    const p = new Promise((resolve,reject)=>{
+      sb.addEventListener('updateend', resolve, {once:true});
+      sb.addEventListener('error', ()=>reject(new Error('SourceBuffer error (append 被拒，看 updateend 前的 error 事件)')), {once:true});
+    });
+    try { sb.appendBuffer(buf); } catch(e){ log(`  appendBuffer 抛错: ${e.message}`, 'bad'); return; }
+    await p;
+    log(`  → updateend, buffered=${fmtTR(sb.buffered)}`, 'ok');
+  }
+  const appendMs = (performance.now()-t0).toFixed(1);
+
+  log('6. video.play()');
+  setStage('播放');
+  try { await v.play(); log('  → 播放中', 'ok'); }
+  catch(e){ log(`  play() 被拒: ${e.message}`, 'warn'); }
+
+  const r = { ok:true, url:cfg.url, mime:cfg.mime, bytes: total.byteLength,
+              chunks: cfg.chunks, appendMs: +appendMs, buffered: fmtTR(sb.buffered) };
+  v.addEventListener('timeupdate', function onTU(){
+    if (v.currentTime > 1.0 && !r.t1s){ r.t1s = v.currentTime.toFixed(2); r.dropped = v.getVideoPlaybackQuality?.().droppedVideoFrames; }
+    if (v.currentTime > 2.5){ v.removeEventListener('timeupdate', onTU); window.__mseResult = r; }
+  });
+}
+function once(v, evName, ms, openName){
+  return new Promise(resolve=>{
+    const onErr=()=>{ v.removeEventListener(openName,onOpen); cleanup(); resolve('error'); };
+    const onOpen=()=>{ ms.removeEventListener(openName,onOpen); v.removeEventListener(evName,onErr); cleanup(); resolve('open'); };
+    function cleanup(){ ms.removeEventListener(openName,onOpen); }
+    v.addEventListener(evName, onErr, {once:true});
+    ms.addEventListener(openName, onOpen, {once:true});
+    setTimeout(()=>resolve('timeout'), 5000);
+  });
+}
+document.getElementById('btnRun').onclick = ()=>runPlayer().catch(e=>log('未捕获: '+e.message,'bad'));
+document.getElementById('btnClear').onclick = ()=>document.getElementById('log').innerHTML='';
+
+/* 供无头实测的钩子 */
+window.runPlayer = runPlayer;
+window.__mseResult = null;
+window.fmtTR = fmtTR;
+</script>
+</body>
+</html>
