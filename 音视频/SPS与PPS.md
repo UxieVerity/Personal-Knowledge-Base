@@ -1,6 +1,6 @@
 # SPS与PPS（名词解释）
 
-> **结论：SPS（Sequence Parameter Set，序列参数集）= 描述「一整段视频流怎么解」的全局参数（profile/level、分辨率、帧率、编码工具开关）；PPS（Picture Parameter Set，图像参数集）= 描述「每一帧怎么解」的参数（熵编码模式、slice 分组等）。两者是解码器的「配置说明书」——没有它们，后面收到的所有 slice 数据一个字节都解不了。** 在 H264 裸流里是 NALU 类型 7（SPS）和 8（PPS）；在 MP4 里存放在 stsd 的 avcC box 中（MSE 初始化 SourceBuffer 时就是从这里读的）。
+> **结论：SPS（Sequence Parameter Set，序列参数集）= 描述「一整段视频流怎么解」的全局参数（profile/level、分辨率、帧率、编码工具开关）；PPS（Picture Parameter Set，图像参数集）= 描述「每一帧怎么解」的参数（熵编码模式、slice 分组等）。两者是解码器的「配置说明书」——没有它们，后面收到的所有 slice 数据一个字节都解不了。** 在 H264 裸流里是 NALU 类型 7（SPS）和 8（PPS）；在 MP4 里存放在 stsd 的 avcC box 中（MSE 初始化 SourceBuffer 时就是从这里读的）。H265 在这两者之上还多一个 **VPS（Video Parameter Set，NALU 32）**——理论上管多层级结构，实际单层流里可有可无，见 §1.2。
 
 [[H264与H265结构和原理区别]] · [[fMP4与MP4的区别]] · [[编码与封装的区别]]
 
@@ -40,6 +40,23 @@ H264 码流的基本单位是 NALU。除了真正装画面数据的 slice（类�
 - **时间戳按帧（AU/sample）打，不按 NALU 打**——一帧拆成多个 slice 时它们共用同一 pts；MP4 里 sample 才有 stts 时间表，NALU 没有。
 - 上一节说「SPS/PPS 跟在 IDR 前」，严格说是**跟在「含 IDR 的访问单元」前面**——AnnexB 里它们属于同一个 AU，MP4 里同属一个 sample。
 
+### 1.2 H265 的第三个参数集：VPS（Video Parameter Set）
+
+H265 把参数集扩成了**三件套 VPS（NALU 32）/ SPS（33）/ PPS（34）**，还要加一个 SEI 前置的 AUD 类似物——对应关系和各自内容：
+
+| H264 | H265 | 管什么 | 关键内容 |
+| --- | --- | --- | --- |
+| — | **32 VPS** | **整个视频层级的全局** | 层/子层结构（max_layers、 temporal_id 的层级依赖关系），给多层的 SVC/可分级编码用 |
+| 7 SPS | 33 SPS | 一段序列的全局 | profile_tier_level、分辨率（比 H264 多了 conformance window 的显式裁剪）、色度格式 bit depth |
+| 8 PPS | 34 PPS | 每帧级 | 熵编码（H265 只有 CABAC，没有 CAVLC 开关了）、tile 划分、初始 qp |
+
+**单层流里 VPS 几乎是「可有可无」的**：它设计的初衷是描述多层流（如 spatial scalability）的层间关系，单层流里它只携带基本的时间分层信息。主流编码器/封装器都写它（规范建议带），但**解码器对单层流并不强依赖 VPS**——x265 提供 `--no-vps` 选项、FFmpeg 的 HEVC 解码路径不强制要求 VPS（⏳ 待实测：本地 x265 `--no-vps` 编一段流喂 MSE/ffmpeg 验证）。**面试口径：VPS 是 H265 多层结构的「总目录」，单层流里它基本是仪式性的，SPS/PPS 才是真正干活的两个。**
+
+前端视角的两个差异点：
+
+1. **封装**：H265 的参数集在 MP4 里进的是 **hvcC box**（HEVCDecoderConfigurationRecord），结构比 avcC 复杂——它按 VPS/SPS/PPS 分数组存放还带 nalUnitLength。MSE 声明 `codecs="hvc1.1.6.L93.B0"` 时 init segment 里读的就是它。
+2. **in-band**：和 avc3 对应的思路一样，HEVC 参数集天然允许 in-band（AnnexB 裸流每个 IDR 前带三件套），这也是为什么 WebRTC 里 H265 丢参数集会黑屏、抓包先看 NALU 32/33/34 是否到位。
+
 ## 2. 在哪里出现（前端视角的三个位置）
 
 1. **AnnexB 裸流**（TS、RTSP、H264 裸 h264 文件）：SPS/PPS 作为独立 NALU 插在码流里，用 startcode `00 00 00 01` 分隔，通常在每个 IDR 前重复一次（编码器 `repeat-headers` 参数控制）。
@@ -48,13 +65,13 @@ H264 码流的基本单位是 NALU。除了真正装画面数据的 slice（类�
 
 ## 3. 为什么面试会问（三个追问点）
 
-- **丢包/黑屏问题**：直播场景客户端中途加入却一直黑屏花屏 → 十有八九是**没等到 SPS/PPS 就开始喂解码器**。排查顺序：先确认拉到的第一个分片是否包含参数集（FLV 的 AVC sequence header、fMP4 的 init segment）。
+- **丢包/黑屏问题**：直播场景客户端中途加入却一直黑屏花屏 → 十有八九是**没等到 SPS/PPS 就开始喂解码器**。排查顺序：先确认拉到的第一个分片是否包含参数集（FLV 的 AVC sequence header、fMP4 的 init segment）；H265 抓包则看 NALU 32/33/34 三件套是否到位。
 - **SPS 变了怎么办**：分辨率中途切换 = SPS 变化。avc1 封装里 SPS 锁死在 avcC，必须换 init segment（MSE 是 `changeType()` + 重喂）；avc3 允许 in-band，SPS 跟关键帧走、解码器就地应用（同 HEVC 的 VPS/SPS/PPS 三件套）。
 - **和 avc1/avc3 的关系**：avc1 = 参数集只能在 avcC；avc3 = 参数集额外允许出现在 sample 里。Chrome 实测声明 avc1 喂 in-band 也能播（demuxer 只认 avcC），但跨端不合规，见 [[fMP4与MP4的区别]] §3.4.1。
 
 ## 4. 面试速记
 
-> **30 秒版**："SPS 是序列参数集——一段流的全局解码配置：profile/level、分辨率、帧率；PPS 是图像参数集——每帧级的配置：CABAC、初始 qp 这些。它们是解码器的说明书，没有就一个 slice 都解不了。位置上：裸流里是 NALU 7/8 跟在 IDR 前；MP4 里被抽进 avcC，MSE 初始化 SourceBuffer 就是从这里读的——所以 MSE 的 media segment 不带参数集也能解。直播中途黑屏先查有没有等到 SPS/PPS；分辨率切换本质是 SPS 变化，avc1 要换 init，avc3 支持 in-band 就地更新。追问「一个 NALU 是一帧吗」：不是——NALU 是传输单元，一帧是访问单元 AU，一帧可以拆多 slice 也可以和参数集/SEI 聚合；时间戳按帧打不按 NALU 打。"
+> **30 秒版**："SPS 是序列参数集——一段流的全局解码配置：profile/level、分辨率、帧率；PPS 是图像参数集——每帧级的配置：CABAC、初始 qp 这些。它们是解码器的说明书，没有就一个 slice 都解不了。位置上：裸流里是 NALU 7/8 跟在 IDR 前；MP4 里被抽进 avcC，MSE 初始化 SourceBuffer 就是从这里读的——所以 MSE 的 media segment 不带参数集也能解。直播中途黑屏先查有没有等到 SPS/PPS；分辨率切换本质是 SPS 变化，avc1 要换 init，avc3 支持 in-band 就地更新。追问「一个 NALU 是一帧吗」：不是——NALU 是传输单元，一帧是访问单元 AU，一帧可以拆多 slice 也可以和参数集/SEI 聚合；时间戳按帧打不按 NALU 打。追问 H265：参数集变成三件套 VPS/SPS/PPS（NALU 32/33/34），MP4 里进 hvcC——但 VPS 是给多层可分级编码用的，单层流里基本是仪式性的，真正干活的是 SPS/PPS。"
 
 ## 相关笔记
 
