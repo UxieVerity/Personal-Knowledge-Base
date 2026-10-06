@@ -1,0 +1,178 @@
+[
+ {
+  "label": "A. codecs=avc1 + 纯avc1流（基线）",
+  "res": {
+   "url": "/media/avc1-pure.mp4",
+   "mime": "video/mp4; codecs=\"avc1.42E01E\"",
+   "supported": true,
+   "bytes": 611919,
+   "chunks": [
+    {
+     "appended": 203973,
+     "buffered": [
+      [
+       0,
+       3.4
+      ]
+     ]
+    },
+    {
+     "appended": 203973,
+     "buffered": [
+      [
+       0,
+       6.63
+      ]
+     ]
+    },
+    {
+     "appended": 203973,
+     "buffered": [
+      [
+       0,
+       10
+      ]
+     ]
+    }
+   ],
+   "played": 2.51,
+   "readyState": 4,
+   "dropped": 0,
+   "decodedFrames": 74,
+   "ok": true,
+   "error": null
+  }
+ },
+ {
+  "label": "B. codecs=avc1 + I帧带in-band SPS/PPS（用户用法）",
+  "res": {
+   "url": "/media/avc1-declared-inband.mp4",
+   "mime": "video/mp4; codecs=\"avc1.42E01E\"",
+   "supported": true,
+   "bytes": 613469,
+   "chunks": [
+    {
+     "appended": 204490,
+     "buffered": [
+      [
+       0,
+       3.4
+      ]
+     ]
+    },
+    {
+     "appended": 204490,
+     "buffered": [
+      [
+       0,
+       6.63
+      ]
+     ]
+    },
+    {
+     "appended": 204489,
+     "buffered": [
+      [
+       0,
+       10
+      ]
+     ]
+    }
+   ],
+   "played": 2.5,
+   "readyState": 4,
+   "dropped": 0,
+   "decodedFrames": 75,
+   "ok": true,
+   "error": null
+  }
+ },
+ {
+  "label": "C. codecs=avc3 + I帧带in-band SPS/PPS（规范写法）",
+  "res": {
+   "url": "/media/avc3-inband.mp4",
+   "mime": "video/mp4; codecs=\"avc3.42E01E\"",
+   "supported": true,
+   "bytes": 613469,
+   "chunks": [
+    {
+     "appended": 204490,
+     "buffered": [
+      [
+       0,
+       3.4
+      ]
+     ]
+    },
+    {
+     "appended": 204490,
+     "buffered": [
+      [
+       0,
+       6.63
+      ]
+     ]
+    },
+    {
+     "appended": 204489,
+     "buffered": [
+      [
+       0,
+       10
+      ]
+     ]
+    }
+   ],
+   "played": 2.51,
+   "readyState": 4,
+   "dropped": 0,
+   "decodedFrames": 74,
+   "ok": true,
+   "error": null
+  }
+ },
+ {
+  "label": "D. codecs=avc3 + 纯avc1流（反向错配）",
+  "res": {
+   "url": "/media/avc1-pure.mp4",
+   "mime": "video/mp4; codecs=\"avc3.42E01E\"",
+   "supported": true,
+   "bytes": 611919,
+   "chunks": [
+    {
+     "appended": 203973,
+     "buffered": [
+      [
+       0,
+       3.4
+      ]
+     ]
+    },
+    {
+     "appended": 203973,
+     "buffered": [
+      [
+       0,
+       6.63
+      ]
+     ]
+    },
+    {
+     "appended": 203973,
+     "buffered": [
+      [
+       0,
+       10
+      ]
+     ]
+    }
+   ],
+   "played": 2.51,
+   "readyState": 4,
+   "dropped": 0,
+   "decodedFrames": 74,
+   "ok": true,
+   "error": null
+  }
+ }
+]
