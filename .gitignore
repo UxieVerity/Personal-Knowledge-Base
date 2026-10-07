@@ -10,3 +10,10 @@ node_modules/
 .obsidian/graph.json
 音视频/media/
 音视频/measure-result.json
+
+# 面试私有内容（public 仓库不收录，本地保留）
+八股文列表.md
+面试复习大纲.md
+面试复习准备计划.md
+投递岗位定向补盲/
+模拟面试与话术/
