@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSS 综合实测：居中 / Grid / 两栏三栏 / 层叠 / 重绘回流 / 响应式</title>
+<style>
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; margin: 20px; background: #fafafa; color: #333; }
+  h2 { font-size: 16px; border-bottom: 2px solid #4a90d9; padding-bottom: 4px; margin-top: 24px; }
+  .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 14px; margin: 10px 0; }
+  .demo { background: #e7f1ff; border: 1px dashed #4a90d9; padding: 8px; margin-top: 6px; position: relative; }
+  .btn { padding: 4px 10px; border: 1px solid #4a90d9; background: #4a90d9; color: #fff; border-radius: 4px; cursor: pointer; margin: 3px; font-size: 12px; }
+
+  /* 居中 */
+  .center-flex { display: flex; justify-content: center; align-items: center; height: 100px; }
+  .center-box { background: #51cf66; padding: 8px 16px; border-radius: 4px; }
+
+  /* Grid */
+  .grid-demo { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; }
+  .grid-item { background: #9775fa; color: #fff; padding: 12px; text-align: center; border-radius: 4px; }
+
+  /* 两栏三栏 */
+  .two-col { display: flex; }
+  .two-side { flex: 0 0 100px; background: #ffa94d; padding: 10px; }
+  .two-main { flex: 1; background: #ffe8cc; padding: 10px; }
+  .three-col { display: grid; grid-template-columns: 80px 1fr 80px; gap: 6px; }
+  .three-l, .three-r { background: #ffa94d; padding: 10px; }
+  .three-m { background: #ffe8cc; padding: 10px; }
+
+  /* 层叠上下文 */
+  .stack-a, .stack-b { position: relative; width: 120px; height: 70px; color: #fff; display: flex; align-items: center; justify-content: center; }
+  .stack-a { background: #4a90d9; z-index: 1; }
+  .stack-b { background: #e64980; z-index: 2; margin-top: -30px; margin-left: 30px; }
+  .stack-b2 { position: absolute; bottom: -20px; left: 10px; background: #f76707; z-index: 999; padding: 4px 8px; font-size: 11px; border-radius: 3px; }
+
+  /* 重绘回流 */
+  #moveBox { width: 60px; height: 40px; background: #4a90d9; color: #fff; display: flex; align-items: center; justify-content: center; border-radius: 4px; position: relative; }
+  .counts { font-size: 12px; color: #666; margin-top: 6px; }
+
+  /* 响应式 */
+  .rwd-nav { display: flex; gap: 4px; background: #333; color: #fff; padding: 8px; }
+  .rwd-nav span { padding: 2px 8px; }
+  @media (max-width: 600px) {
+    .rwd-nav { flex-direction: column; background: #7048e8; }
+  }
+</style>
+</head>
+<body>
+
+<h1>CSS 综合实测</h1>
+
+<h2>① 水平垂直居中（Flex / Grid）</h2>
+<div class="card">
+  <div class="demo center-flex"><div class="center-box">flex 居中</div></div>
+  <p style="font-size:12px;color:#666">Flex：justify-content: center + align-items: center（Grid：place-items: center 更简）</p>
+</div>
+
+<h2>② Grid：自适应列数（auto-fill + minmax）</h2>
+<div class="card">
+  <div class="demo grid-demo" id="gridDemo">
+    <div class="grid-item">1</div><div class="grid-item">2</div><div class="grid-item">3</div>
+    <div class="grid-item">4</div><div class="grid-item">5</div><div class="grid-item">6</div>
+  </div>
+  <p style="font-size:12px;color:#666">拖窄窗口 → 列数自动减少（<code>repeat(auto-fill, minmax(80px,1fr))</code>）——这就是响应式栅格。</p>
+</div>
+
+<h2>③ 两栏 / 三栏布局</h2>
+<div class="card">
+  <p style="font-size:13px"><b>两栏</b>（flex: 0 0 100px + flex: 1）：</p>
+  <div class="demo two-col"><div class="two-side">侧边栏</div><div class="two-main">主内容（自适应）</div></div>
+  <p style="font-size:13px;margin-top:10px"><b>三栏</b>（grid 80px 1fr 80px）：</p>
+  <div class="demo three-col"><div class="three-l">左</div><div class="three-m">中（自适应）</div><div class="three-r">右</div></div>
+</div>
+
+<h2>④ 层叠上下文：z-index 999 的儿子 vs 父亲</h2>
+<div class="card">
+  <div class="demo" style="height:90px">
+    <div class="stack-a">A (z:1)</div>
+    <div class="stack-b">B (z:2)<div class="stack-b2">B的儿子 z:999</div></div>
+  </div>
+  <p style="font-size:12px;color:#666">B 的 z-index(2) &gt; A 的 z-index(1) → B 整块（含儿子）盖住 A。若把 B 改小（如 z:0）就会看见 B 的儿子 999 也盖不住 A —— 跨上下文看父亲。</p>
+</div>
+
+<h2>⑤ 重绘回流：transform vs left 动画</h2>
+<div class="card">
+  <div class="demo" style="height:80px">
+    <div id="moveBox">box</div>
+  </div>
+  <button class="btn" id="btnTransform">transform 动画</button>
+  <button class="btn" id="btnLeft">left 动画（触发回流）</button>
+  <button class="btn" id="btnReset">重置</button>
+  <p class="counts" id="counts">点击按钮后拖动窗口观察：transform 只走合成层（流畅），left 每帧触发回流（可能卡顿）。</p>
+</div>
+
+<h2>⑥ 响应式：断点切换</h2>
+<div class="card">
+  <div class="demo"><div class="rwd-nav"><span>首页</span><span>产品</span><span>关于</span><span>联系</span></div></div>
+  <p style="font-size:12px;color:#666">窗口 &lt; 600px → 导航变竖排（紫色）。这是媒体查询断点效果。</p>
+</div>
+
+<script>
+  // ⑤ 动画对比
+  const box = document.getElementById('moveBox');
+  let animId = null;
+  function stop() { if (animId) { cancelAnimationFrame(animId); animId = null; box.style.left = '0'; box.style.transform = 'none'; } }
+  document.getElementById('btnTransform').addEventListener('click', () => {
+    stop(); let x = 0;
+    (function loop() { x = (x + 2) % 200; box.style.transform = `translateX(${x}px)`; animId = requestAnimationFrame(loop); })();
+  });
+  document.getElementById('btnLeft').addEventListener('click', () => {
+    stop(); box.style.position = 'relative'; let x = 0;
+    (function loop() { x = (x + 2) % 200; box.style.left = x + 'px'; animId = requestAnimationFrame(loop); })();
+  });
+  document.getElementById('btnReset').addEventListener('click', stop);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BFC 实测：清浮动 / margin 塌陷 / 两栏布局</title>
+<style>
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; margin: 24px; background: #fafafa; color: #333; }
+  h2 { font-size: 16px; border-bottom: 2px solid #4a90d9; padding-bottom: 4px; margin-top: 28px; }
+  .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin: 12px 0; }
+  .toggle { margin-bottom: 8px; }
+  .badge { display: inline-block; background: #ff6b6b; color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 10px; }
+  .badge.good { background: #51cf66; }
+
+  /* ① 清浮动：父容器默认塌陷 */
+  .clearfix-parent { background: #e7f1ff; padding: 8px; }
+  .float-child { float: left; width: 80px; height: 40px; margin: 4px; background: #4a90d9; color: #fff; text-align: center; line-height: 40px; }
+  .clearfix-parent.bfc { display: flow-root; }   /* 开 BFC → 包含浮动 */
+  .clearfix-parent.ovh { overflow: hidden; }     /* 开 BFC → overflow 方式 */
+
+  /* ② margin 塌陷 */
+  .collapse-parent { background: #fff3cd; }
+  .collapse-child { margin-top: 24px; background: #ffd43b; height: 40px; }
+  .collapse-parent.bfc { display: flow-root; }   /* 开 BFC → margin 不穿透 */
+
+  /* ③ 两栏 */
+  .left { float: left; width: 160px; height: 80px; background: #9775fa; color: #fff; display: flex; align-items: center; justify-content: center; }
+  .right { height: 80px; background: #d0bfff; }
+  .right.bfc { overflow: hidden; }               /* 开 BFC → 不与浮动重叠，占剩余 */
+</style>
+</head>
+<body>
+
+<h1>BFC 实测（开/关对比）</h1>
+<p>用 <code>display: flow-root</code> / <code>overflow: hidden</code> 开关 BFC，观察三大问题。</p>
+
+<h2>① 清浮动：父容器是否包含浮动子元素</h2>
+<div class="card">
+  <div class="toggle">
+    <label><input type="checkbox" id="bfc1"> 开 BFC（display: flow-root）</label>
+    <label style="margin-left:16px"><input type="checkbox" id="bfc1b"> overflow: hidden</label>
+  </div>
+  <div class="clearfix-parent" id="clearfixParent">
+    <div class="float-child">浮动1</div>
+    <div class="float-child">浮动2</div>
+    <div class="float-child">浮动3</div>
+  </div>
+  <p>父容器背景 <span class="badge" id="bfc1State">塌陷（未开 BFC）</span>
+     <span class="badge good" id="bfc1State2" style="display:none">包含浮动（BFC 生效）</span></p>
+  <p class="note">说明：浮动元素脱离文档流，父容器默认不算它们高度 → 塌陷；BFC 必须包含内部浮动 → 高度恢复。</p>
+</div>
+
+<h2>② 外边距塌陷：子元素 margin-top 是否穿透</h2>
+<div class="card">
+  <div class="toggle"><label><input type="checkbox" id="bfc2"> 开 BFC（display: flow-root）</label></div>
+  <div style="background:#f1f3f5;height:8px"></div>
+  <div class="collapse-parent" id="collapseParent">
+    <div class="collapse-child">margin-top: 24px</div>
+  </div>
+  <p>父容器（黄色）顶部的间距 = 子元素 margin-top 穿透出来的结果（未开 BFC 时外移）。</p>
+</div>
+
+<h2>③ 两栏布局：右栏是否让开左浮动</h2>
+<div class="card">
+  <div class="toggle"><label><input type="checkbox" id="bfc3"> 右栏开 BFC（overflow: hidden）</label></div>
+  <div class="left">浮动左栏</div>
+  <div class="right" id="rightCol">右栏（默认会与浮动重叠/被盖住）</div>
+</div>
+
+<script>
+  const clearfixParent = document.getElementById('clearfixParent');
+  const collapseParent = document.getElementById('collapseParent');
+  const rightCol = document.getElementById('rightCol');
+  const s1 = document.getElementById('bfc1State');
+  const s1b = document.getElementById('bfc1State2');
+
+  function refresh() {
+    // ① 清浮动
+    const b1 = document.getElementById('bfc1').checked;
+    const b1b = document.getElementById('bfc1b').checked;
+    clearfixParent.classList.toggle('bfc', b1);
+    clearfixParent.classList.toggle('ovh', b1b);
+    const on = b1 || b1b;
+    s1.style.display = on ? 'none' : 'inline-block';
+    s1b.style.display = on ? 'inline-block' : 'none';
+    // ② margin
+    collapseParent.classList.toggle('bfc', document.getElementById('bfc2').checked);
+    // ③ 两栏
+    rightCol.classList.toggle('bfc', document.getElementById('bfc3').checked);
+  }
+  ['bfc1','bfc1b','bfc2','bfc3'].forEach(id => document.getElementById(id).addEventListener('change', refresh));
+  refresh();
+</script>
+
+</body>
+</html>

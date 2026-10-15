@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Flex 布局实测</title>
+<style>
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; margin: 24px; background: #fafafa; color: #333; }
+  h2 { font-size: 16px; border-bottom: 2px solid #4a90d9; padding-bottom: 4px; margin-top: 28px; }
+  .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin: 12px 0; }
+  .box { display: flex; background: #e7f1ff; border: 1px dashed #4a90d9; min-height: 60px; padding: 6px; }
+  .item { background: #4a90d9; color: #fff; padding: 8px 12px; margin: 4px; border-radius: 4px; text-align: center; min-width: 40px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; font-size: 13px; }
+  .controls label { display: inline-flex; align-items: center; gap: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Flex 布局实测</h1>
+
+<h2>① flex-direction：主轴方向</h2>
+<div class="card">
+  <div class="controls">
+    <label>row <input type="radio" name="dir" value="row" checked></label>
+    <label>row-reverse <input type="radio" name="dir" value="row-reverse"></label>
+    <label>column <input type="radio" name="dir" value="column"></label>
+    <label>column-reverse <input type="radio" name="dir" value="column-reverse"></label>
+  </div>
+  <div class="box" id="dirBox" style="flex-direction: row">
+    <div class="item">1</div><div class="item">2</div><div class="item">3</div>
+  </div>
+  <p>主轴方向变化 → justify-content（主轴对齐）的方向也跟着变。</p>
+</div>
+
+<h2>② flex: 1 均分剩余空间（对比固定宽度）</h2>
+<div class="card">
+  <div class="controls">
+    <label><input type="checkbox" id="grow" checked> 子项 flex: 1（均分）</label>
+  </div>
+  <div class="box" style="width: 480px">
+    <div class="item" id="growA" style="flex:1">A</div>
+    <div class="item" id="growB" style="flex:2">B (2x)</div>
+    <div class="item" id="growC" style="flex:1">C</div>
+  </div>
+  <p>flex: 1, 2, 1 → 剩余空间按 1:2:1 分配（B 是 A/C 的两倍宽）。</p>
+</div>
+
+<h2>③ flex-basis / shrink：固定宽度 vs 可压缩</h2>
+<div class="card">
+  <div class="controls">
+    <label><input type="checkbox" id="shrink" checked> 子项可压缩（默认 shrink:1）</label>
+  </div>
+  <div class="box" style="width: 360px">
+    <div class="item" id="shrinkA" style="flex: 0 0 200px">固定 200px</div>
+    <div class="item" id="shrinkB" style="flex: 1 1 100px">flex:1 1 100px</div>
+  </div>
+  <p>容器窄时：固定 200px 不缩；flex:1 1 100px 的可压缩。关掉「可压缩」看溢出。</p>
+</div>
+
+<h2>④ 对齐：justify-content（主轴）+ align-items（交叉轴）</h2>
+<div class="card">
+  <div class="controls">
+    <label>justify: <select id="justify">
+      <option value="flex-start">flex-start</option>
+      <option value="center" selected>center</option>
+      <option value="space-between">space-between</option>
+      <option value="space-around">space-around</option>
+      <option value="space-evenly">space-evenly</option>
+    </select></label>
+    <label>align-items: <select id="align">
+      <option value="stretch" selected>stretch</option>
+      <option value="center">center</option>
+      <option value="flex-start">flex-start</option>
+      <option value="flex-end">flex-end</option>
+    </select></label>
+  </div>
+  <div class="box" id="alignBox" style="height: 100px; justify-content: center; align-items: stretch">
+    <div class="item" style="height:30px">1</div>
+    <div class="item" style="height:50px">2</div>
+    <div class="item" style="height:40px">3</div>
+  </div>
+</div>
+
+<h2>⑤ 常用布局：居中 + 侧边栏固定</h2>
+<div class="card">
+  <p><b>水平垂直居中：</b></p>
+  <div style="display:flex; justify-content:center; align-items:center; height:80px; background:#e7f1ff; border-radius:6px">
+    <div style="background:#51cf66; padding:8px 20px; border-radius:4px">居中内容</div>
+  </div>
+  <p style="margin-top:16px"><b>侧边栏固定 + 主内容自适应：</b></p>
+  <div style="display:flex; background:#e7f1ff; border-radius:6px">
+    <div style="flex: 0 0 120px; background:#9775fa; color:#fff; padding:12px; border-radius:6px 0 0 6px">侧边栏 120px</div>
+    <div style="flex: 1; padding:12px; background:#d0bfff; border-radius:0 6px 6px 0">主内容 flex:1（占剩余）</div>
+  </div>
+</div>
+
+<script>
+  // ① flex-direction
+  document.querySelectorAll('input[name=dir]').forEach(r => r.addEventListener('change', () => {
+    document.getElementById('dirBox').style.flexDirection = document.querySelector('input[name=dir]:checked').value;
+  }));
+  // ② grow
+  document.getElementById('grow').addEventListener('change', e => {
+    const on = e.target.checked;
+    document.getElementById('growA').style.flex = on ? '1' : 'none';
+    document.getElementById('growB').style.flex = on ? '2' : 'none';
+    document.getElementById('growC').style.flex = on ? '1' : 'none';
+  });
+  // ③ shrink
+  document.getElementById('shrink').addEventListener('change', e => {
+    const on = e.target.checked;
+    document.getElementById('shrinkA').style.flex = on ? '0 0 200px' : '0 0 200px';
+    document.getElementById('shrinkB').style.flex = on ? '1 1 100px' : '1 0 100px';
+  });
+  // ④ 对齐
+  document.getElementById('justify').addEventListener('change', e => document.getElementById('alignBox').style.justifyContent = e.target.value);
+  document.getElementById('align').addEventListener('change', e => document.getElementById('alignBox').style.alignItems = e.target.value);
+</script>
+
+</body>
+</html>
